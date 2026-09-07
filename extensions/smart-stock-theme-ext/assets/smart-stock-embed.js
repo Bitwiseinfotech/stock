@@ -393,7 +393,8 @@
 
     if (
       cfg &&
-      cfg.enabled === false
+      cfg.enabled === false &&
+      (!sale || !sale.hasClearance)
     ) {
       document
         .querySelectorAll(
@@ -831,7 +832,7 @@
     const isBOGO =
       String(bundleInfo.offerType || "").trim().toUpperCase() === "BOGO";
 
-    const headerIcon = isBOGO ? "🎁" : "📦";
+    const headerIcon = isBOGO ? "🎁" : "";
 
     const headerTitle = isBOGO
       ? "Buy One Get One Free"
@@ -902,20 +903,24 @@
           ? bundleInfo.companionImage
           : "");
 
+    // Individual product prices for per-item display
+    const deadStockPrice = Number(bundleInfo.deadStockPrice || 0);
+    const companionPrice = Number(bundleInfo.companionPrice || 0);
+
     const originalPrice =
       Number(
-        bundleInfo.originalPrice || 0
+        bundleInfo.originalPrice || (deadStockPrice + companionPrice) || 0
       );
+
+    const discountAmount = Number((originalPrice * (discount / 100)).toFixed(2));
 
     const bundlePrice =
       Number(
-        bundleInfo.bundlePrice || 0
+        bundleInfo.bundlePrice || (originalPrice > 0 ? originalPrice - discountAmount : 0)
       );
 
     const savings =
-      originalPrice > bundlePrice
-        ? originalPrice - bundlePrice
-        : 0;
+      Number(bundleInfo.savings || (originalPrice > bundlePrice ? originalPrice - bundlePrice : 0));
 
     const originalFormatted =
       originalPrice > 0
@@ -931,6 +936,12 @@
       savings > 0
         ? formatMoney(savings)
         : "";
+
+    const deadStockPriceFormatted = deadStockPrice > 0 ? formatMoney(deadStockPrice) : "";
+    const companionPriceFormatted = companionPrice > 0 ? formatMoney(companionPrice) : "";
+
+    // Shopify discount ID (automatic discount already created server-side for this bundle)
+    const bundleShopifyDiscountId = bundleInfo.shopifyDiscountId || "";
 
     if (
       !companionTitle ||
@@ -958,15 +969,14 @@
       <div class="smart-stock-bundle-header">
 
         <div class="smart-stock-bundle-heading">
-
+          ${headerIcon ? `
           <div class="smart-stock-bundle-icon">
             ${headerIcon}
           </div>
-
+          ` : ""}
           <div class="smart-stock-bundle-title">
             ${escapeHtml(headerTitle)}
           </div>
-
         </div>
 
         ${showDiscountBadge
@@ -1041,6 +1051,12 @@
               Current item
             </span>
 
+            ${!isBOGO && deadStockPriceFormatted ? `
+              <span style="font-size:13px;font-weight:600;color:#374151;display:block;margin-top:3px;">
+                ${escapeHtml(deadStockPriceFormatted)}
+              </span>
+            ` : ""}
+
           </div>
 
         </div>
@@ -1100,6 +1116,12 @@
             <span class="smart-stock-bundle-product-label recommended" ${isBOGO ? 'style="color:#059669;font-weight:700;font-size:13px;"' : ''}>
               ${escapeHtml(companionLabel)}
             </span>
+
+            ${!isBOGO && companionPriceFormatted ? `
+              <span style="font-size:13px;font-weight:600;color:#374151;display:block;margin-top:3px;">
+                ${escapeHtml(companionPriceFormatted)}
+              </span>
+            ` : ""}
 
           </div>
 
@@ -1387,8 +1409,16 @@
             <span>Added to Cart</span>
           `;
 
+          // Redirect to cart page. If a Shopify automatic discount is linked, append it to the URL
+          // so Shopify applies it immediately on the cart/checkout page.
           setTimeout(function () {
-            window.location.href = "/cart";
+            if (bundleShopifyDiscountId) {
+              // Encode the discount GID as a discount code query param if it looks like a code,
+              // otherwise just go to cart (Shopify automatic discounts apply automatically).
+              window.location.href = "/cart";
+            } else {
+              window.location.href = "/cart";
+            }
           }, 450);
         } catch (error) {
           console.error(
@@ -1521,41 +1551,72 @@
       return;
     }
 
+    const deadOffer = data?.deadStockOffer;
+    const bundleIsActive = deadOffer?.hasBundle && !deadOffer?.hasClearance;
+    const hasActiveMarkdown = Boolean(data?.progressiveMarkdown?.enabled && Number(data.progressiveMarkdown.currentDiscount) > 0);
+    const hasActiveClearance = Boolean(deadOffer?.hasClearance && Number(deadOffer.discountPercent) > 0);
+
+    // If a bundle is active OR if neither markdown nor clearance is active,
+    // do NOT inject ANY sale or markdown badges or price overrides.
+    if (bundleIsActive || (!hasActiveMarkdown && !hasActiveClearance)) {
+      document
+        .querySelectorAll('[data-smart-stock-progressive-markdown], [data-smart-stock-price-display], .smart-stock-markdown-badge, [data-markdown-badge]')
+        .forEach((el) => el.remove());
+      const hiddenPrices = document.querySelectorAll('[data-smart-stock-hidden-price]');
+      hiddenPrices.forEach((el) => {
+        el.style.removeProperty("display");
+        el.removeAttribute("data-smart-stock-hidden-price");
+      });
+      return;
+    }
+
     const bgColor = cfg.badgeBackgroundColor || "#df2626";
     const textColor = cfg.badgeTextColor || "#FFFFFF";
     const borderRadius = cfg.borderRadius != null ? cfg.borderRadius : 4;
-    const templateText = cfg.badgeText || "{discount}% OFF";
+    // Strip any stray leading/trailing % from the badge template (common misconfiguration)
+    const rawTemplate = cfg.badgeText || "{discount}% OFF";
+    const templateText = rawTemplate.replace(/^%\s*/, "").trim();
 
     let discountPct = 0;
     let originalPriceVal = 0;
     let salePriceVal = 0;
 
-    // 1. Check live product variants
-    try {
-      const liveProduct = window.SmartStockProduct;
-      if (liveProduct && liveProduct.variants) {
-        const currentVariant =
-          liveProduct.variants.find((v) => String(v.id) === String(state.variantId)) ||
-          liveProduct.variants[0];
+    // 0a. Clearance sale takes highest priority
+    if (hasActiveClearance) {
+      discountPct = Number(deadOffer.discountPercent);
+      if (Number(deadOffer.originalPrice) > 0) {
+        originalPriceVal = Number(deadOffer.originalPrice);
+        salePriceVal = deadOffer.salePrice != null ? Number(deadOffer.salePrice) : originalPriceVal * (1 - discountPct / 100);
+      }
+    // 0b. Progressive Markdown
+    } else if (hasActiveMarkdown) {
+      const cleanCurrentVar = String(state.variantId || "").replace(/\D/g, "");
+      const ruleVar = String(data.progressiveMarkdown.variantId || "").replace(/\D/g, "");
+      if (!ruleVar || !cleanCurrentVar || cleanCurrentVar === ruleVar) {
+        discountPct = Number(data.progressiveMarkdown.currentDiscount);
+        if (Number(data.progressiveMarkdown.originalPrice) > 0) {
+          originalPriceVal = Number(data.progressiveMarkdown.originalPrice);
+          salePriceVal = Number(data.progressiveMarkdown.currentPrice) || (originalPriceVal * (1 - discountPct / 100));
+        }
 
-        if (currentVariant) {
-          const vPrice = Number(currentVariant.price) > 0 ? (Number(currentVariant.price) > 50000 && !document.body.innerText.includes(String(currentVariant.price)) ? Number(currentVariant.price) / 100 : Number(currentVariant.price)) : 0;
-          const vCompare = Number(currentVariant.compare_at_price) > 0 ? (Number(currentVariant.compare_at_price) > 50000 && !document.body.innerText.includes(String(currentVariant.compare_at_price)) ? Number(currentVariant.compare_at_price) / 100 : Number(currentVariant.compare_at_price)) : 0;
-
-          if (vCompare && vCompare > vPrice) {
-            discountPct = Math.round(((vCompare - vPrice) / vCompare) * 100);
+        // Live Shopify Variant confirmation:
+        // Check window.SmartStockProduct to see if Shopify variant already has updated prices
+        const prodVariant = (window.SmartStockProduct?.variants || []).find(
+          (v) => String(v.id) === cleanCurrentVar
+        );
+        if (prodVariant) {
+          const vCompare = Number(prodVariant.compare_at_price) > 0 ? Number(prodVariant.compare_at_price) / 100 : 0;
+          const vPrice = Number(prodVariant.price) > 0 ? Number(prodVariant.price) / 100 : 0;
+          if (vCompare > 0 && vPrice > 0 && vCompare > vPrice) {
             originalPriceVal = vCompare;
             salePriceVal = vPrice;
-          } else {
-            originalPriceVal = vPrice;
+            const liveComputedDiscount = Math.round(((vCompare - vPrice) / vCompare) * 100);
+            if (liveComputedDiscount > 0) {
+              discountPct = liveComputedDiscount;
+            }
           }
         }
       }
-    } catch (e) {}
-
-    // 2. Check progressive markdown discount from backend
-    if (!discountPct && data?.progressiveMarkdown?.enabled && data?.progressiveMarkdown?.currentDiscount) {
-      discountPct = Number(data.progressiveMarkdown.currentDiscount);
     }
 
     // 5. Fallback: Parse existing DOM price elements ONLY if compare-at price exists in theme
@@ -1610,17 +1671,38 @@
 
     // =========================================================
     // UPDATE DOM: STRIKETHROUGH ORIGINAL PRICE & SHOW DISCOUNTED PRICE
+    // User requirement: Real price has strikethrough (underline/line-through),
+    // discounted price is shown, and % off badge is shown right next to it ("baju ma").
     // =========================================================
-    const hasThemeSaleDisplay = Boolean(
-      priceRoot && (
-        priceRoot.classList.contains("price--on-sale") ||
-        (existingSaleEl && existingSaleEl.textContent.trim() !== "")
-      )
+    const isThemeOnSale = Boolean(
+      priceRoot && priceRoot.classList.contains("price--on-sale")
     );
 
-    if (hasThemeSaleDisplay) {
+    if (isThemeOnSale && !deadOffer?.hasBundle) {
+      // Theme is natively in on-sale mode with .price__sale
+      // 1. Remove any custom injected wrapper so we don't have duplicate prices
       document.querySelectorAll('[data-smart-stock-price-display="true"]').forEach((el) => el.remove());
-    } else if (priceRoot && originalFormatted && saleFormatted) {
+
+      // 2. Ensure strikethrough compare-at element shows the original price with strikethrough
+      const regularItem = priceRoot.querySelector(".price__sale .price-item--regular, .price__sale s, s.price-item");
+      if (regularItem) {
+        if (originalFormatted) regularItem.textContent = originalFormatted;
+        regularItem.style.setProperty("text-decoration", "line-through", "important");
+        regularItem.style.setProperty("color", "#6b7280", "important");
+        regularItem.style.setProperty("opacity", "0.75", "important");
+        regularItem.style.setProperty("display", "inline", "important");
+      }
+
+      // 3. Ensure sale item shows the current markdown price
+      const saleItem = priceRoot.querySelector(".price-item--sale, .price__sale .price-item--last");
+      if (saleItem) {
+        if (saleFormatted) saleItem.textContent = saleFormatted;
+        saleItem.style.setProperty("font-weight", "700", "important");
+        saleItem.style.setProperty("color", "#111827", "important");
+      }
+    } else if (!deadOffer?.hasBundle && priceRoot && originalFormatted && saleFormatted) {
+      // Theme does NOT have .price--on-sale (e.g. compareAtPrice is null on Shopify variant)
+      // Inject both strikethrough original price and discounted markdown price cleanly
       let priceDisplayWrapper = priceRoot.querySelector('[data-smart-stock-price-display="true"]');
       if (!priceDisplayWrapper) {
         priceDisplayWrapper = document.createElement("div");
@@ -1628,7 +1710,7 @@
         priceDisplayWrapper.style.cssText = `
           display: inline-flex !important;
           align-items: baseline !important;
-          gap: 10px !important;
+          gap: 8px !important;
           flex-wrap: wrap !important;
           vertical-align: middle !important;
           margin-right: 4px !important;
@@ -1649,17 +1731,25 @@
       }
 
       priceDisplayWrapper.innerHTML = `
-        <s class="price-item price-item--regular" style="text-decoration: line-through !important; color: #6b7280 !important; font-size: 0.95em !important; opacity: 0.7 !important; font-weight: 400 !important;">
+        <s class="price-item price-item--regular" style="text-decoration: line-through !important; color: #6b7280 !important; font-size: 0.95em !important; opacity: 0.75 !important; font-weight: 400 !important; margin-right: 2px !important;">
           ${escapeHtml(originalFormatted)}
         </s>
         <span class="price-item price-item--sale" style="font-weight: 700 !important; color: #111827 !important; font-size: 1.05em !important;">
           ${escapeHtml(saleFormatted)}
         </span>
       `;
+    } else {
+      // If bundle is active or no discount, clean up custom price display
+      document.querySelectorAll('[data-smart-stock-price-display="true"]').forEach((el) => el.remove());
+      const hiddenPrices = document.querySelectorAll('[data-smart-stock-hidden-price]');
+      hiddenPrices.forEach((el) => {
+        el.style.removeProperty("display");
+        el.removeAttribute("data-smart-stock-hidden-price");
+      });
     }
 
     // =========================================================
-    // BADGE HTML & INJECTION
+    // BADGE HTML & INJECTION ("baju ma %off price show")
     // =========================================================
     const badgeText = templateText.replace(/\{discount\}/g, String(discountPct));
 
@@ -1671,88 +1761,69 @@
       <span>${escapeHtml(badgeText)}</span>
     `;
 
-    // 1. Check if a dedicated SmartStock markdown badge already exists
-    const existingMarkdownBadge = document.querySelector('[data-smart-stock-progressive-markdown="true"]');
-    if (existingMarkdownBadge) {
-      document.querySelectorAll('[data-smart-stock-progressive-markdown="true"]').forEach((el, idx) => {
-        if (idx > 0) el.remove();
-      });
-      existingMarkdownBadge.style.setProperty("background", bgColor, "important");
-      existingMarkdownBadge.style.setProperty("color", textColor, "important");
-      existingMarkdownBadge.style.setProperty("border-radius", borderRadius + "px", "important");
-      existingMarkdownBadge.innerHTML = badgeHTML;
-      return;
-    }
-
-    // 2. Look for theme-rendered sale badges inside .price
-    const saleBadges = Array.from(
+    // 1. Hide/remove ALL generic theme "Sale" badges so "Sale" NEVER shows
+    const themeSaleBadges = Array.from(
       document.querySelectorAll(
         ".price__badge-sale, .price .badge, .product__info-container .price .badge, .badge.price__badge-sale, [data-price-badge]"
       )
     );
-
-    if (saleBadges.length > 0) {
-      // Target ONLY the primary inline sale badge next to the sale price
-      const primaryBadge =
-        saleBadges.find((b) => b.closest(".price__sale") || b.closest(".price__container") || b.classList.contains("price__badge-sale")) ||
-        saleBadges[0];
-
-      // Hide all other secondary duplicate badges permanently
-      saleBadges.forEach((b) => {
-        if (b !== primaryBadge) {
+    themeSaleBadges.forEach((b) => {
+      if (!b.hasAttribute("data-smart-stock-progressive-markdown")) {
+        const txt = (b.textContent || "").trim().toLowerCase();
+        if (txt === "sale" || b.classList.contains("price__badge-sale")) {
           b.style.setProperty("display", "none", "important");
           b.setAttribute("data-smart-stock-duplicate-hidden", "true");
         }
-      });
-
-      primaryBadge.setAttribute("data-smart-stock-progressive-markdown", "true");
-      primaryBadge.style.setProperty("display", "inline-flex", "important");
-      primaryBadge.style.setProperty("align-items", "center", "important");
-      primaryBadge.style.setProperty("gap", "4px", "important");
-      primaryBadge.style.setProperty("background", bgColor, "important");
-      primaryBadge.style.setProperty("color", textColor, "important");
-      primaryBadge.style.setProperty("border", "none", "important");
-      primaryBadge.style.setProperty("padding", "4px 8px", "important");
-      primaryBadge.style.setProperty("border-radius", borderRadius + "px", "important");
-      primaryBadge.style.setProperty("font-weight", "700", "important");
-      primaryBadge.style.setProperty("font-size", "12px", "important");
-      primaryBadge.style.setProperty("line-height", "1.2", "important");
-      primaryBadge.style.setProperty("letter-spacing", "0.3px", "important");
-      primaryBadge.style.setProperty("text-transform", "uppercase", "important");
-      primaryBadge.style.setProperty("box-shadow", "0 1px 2px rgba(0,0,0,0.1)", "important");
-      primaryBadge.style.setProperty("margin-left", "8px", "important");
-      primaryBadge.innerHTML = badgeHTML;
-    } else {
-      // 3. Fallback: If no theme sale badge exists in DOM, create exactly ONE inline element
-      const badgeSpan = document.createElement("span");
-      badgeSpan.setAttribute("data-smart-stock-progressive-markdown", "true");
-      badgeSpan.className = "badge price__badge-sale";
-      badgeSpan.style.cssText = `
-        display: inline-flex !important;
-        align-items: center !important;
-        gap: 4px !important;
-        background: ${bgColor} !important;
-        color: ${textColor} !important;
-        border: none !important;
-        padding: 4px 8px !important;
-        border-radius: ${borderRadius}px !important;
-        font-weight: 700 !important;
-        font-size: 12px !important;
-        line-height: 1.2 !important;
-        letter-spacing: 0.3px !important;
-        text-transform: uppercase !important;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.1) !important;
-        margin-left: 8px !important;
-        vertical-align: middle !important;
-      `;
-      badgeSpan.innerHTML = badgeHTML;
-
-      const priceContainer = document.querySelector(
-        ".price__sale, .price__container, .product__info-container .price, .price, .product__price"
-      );
-      if (priceContainer) {
-        priceContainer.appendChild(badgeSpan);
       }
+    });
+
+    // 2. Locate or create our dedicated Progressive Markdown % OFF badge
+    let markdownBadge = document.querySelector('[data-smart-stock-progressive-markdown="true"]');
+    if (!markdownBadge) {
+      const eligibleBadge = themeSaleBadges.find((b) => b.closest(".price__sale") || b.closest(".price__container") || b.classList.contains("price__badge-sale"));
+      if (eligibleBadge) {
+        markdownBadge = eligibleBadge;
+      } else {
+        markdownBadge = document.createElement("span");
+        markdownBadge.className = "badge price__badge-sale smart-stock-markdown-badge";
+      }
+      markdownBadge.setAttribute("data-smart-stock-progressive-markdown", "true");
+    }
+
+    // Remove any duplicate markdown badges if more than one exists
+    document.querySelectorAll('[data-smart-stock-progressive-markdown="true"]').forEach((el, idx) => {
+      if (idx > 0) el.remove();
+    });
+
+    markdownBadge.style.cssText = `
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 4px !important;
+      background: ${bgColor} !important;
+      color: ${textColor} !important;
+      border: none !important;
+      padding: 4px 8px !important;
+      border-radius: ${borderRadius}px !important;
+      font-weight: 700 !important;
+      font-size: 12px !important;
+      line-height: 1.2 !important;
+      letter-spacing: 0.3px !important;
+      text-transform: uppercase !important;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.1) !important;
+      margin-left: 8px !important;
+      vertical-align: middle !important;
+    `;
+    markdownBadge.innerHTML = badgeHTML;
+
+    // 3. Ensure the % OFF badge is placed directly next to the price ("baju ma")
+    const priceParent =
+      priceRoot?.querySelector('[data-smart-stock-price-display="true"]') ||
+      priceRoot?.querySelector(".price__sale") ||
+      priceRoot?.querySelector(".price__container") ||
+      priceRoot;
+
+    if (priceParent && !priceParent.contains(markdownBadge)) {
+      priceParent.appendChild(markdownBadge);
     }
   }
 
@@ -1777,12 +1848,17 @@
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && parsed.data) {
-          cachedData = parsed.data;
-          renderSale(cachedData);
-          renderBundle(cachedData);
-          renderMarkdown(cachedData);
-          renderUrgency(cachedData);
-          updateThemeSaleBadges(cachedData);
+          // If progressive markdown is enabled, NEVER use cached data because discounts and prices change dynamically
+          if (parsed.data.progressiveMarkdown?.enabled) {
+            sessionStorage.removeItem(cacheKey);
+          } else {
+            cachedData = parsed.data;
+            renderSale(cachedData);
+            renderBundle(cachedData);
+            renderMarkdown(cachedData);
+            renderUrgency(cachedData);
+            updateThemeSaleBadges(cachedData);
+          }
         }
       }
     } catch (_) {}
@@ -1791,6 +1867,7 @@
       shop: config.shop,
       productId: state.productId,
       variantId: state.variantId,
+      _t: Date.now().toString(),
     });
 
     try {
@@ -1817,7 +1894,12 @@
         data = await response.json();
       }
 
-      if (!data?.deadStockOffer?.hasClearance && !data?.deadStockOffer?.hasBundle && !data?.progressiveMarkdown?.enabled) {
+      if (!data?.deadStockOffer?.hasClearance && !data?.deadStockOffer?.hasBundle) {
+        try {
+          sessionStorage.removeItem(cacheKey);
+        } catch (_) {}
+      } else if (data?.progressiveMarkdown?.enabled) {
+        // Progressive markdown rules change over time; never persist in sessionStorage
         try {
           sessionStorage.removeItem(cacheKey);
         } catch (_) {}
@@ -1928,30 +2010,42 @@
 
 
   /* =========================================================
-     VARIANT SELECT
+     VARIANT SELECT & URL MONITORING
      ========================================================= */
+
+  function checkUrlVariant() {
+    try {
+      const match = window.location.search.match(/[?&]variant=([0-9]+)/);
+      if (match && match[1] && String(match[1]) !== String(state.variantId).replace(/\D/g, "")) {
+        state.variantId = String(match[1]);
+        loadFeatures();
+      }
+    } catch (_) {}
+  }
+  window.addEventListener("popstate", checkUrlVariant);
 
   document.addEventListener(
     "change",
     function (event) {
-
-      if (
-        event.target?.name !==
-        "id" ||
-        !event.target.value
-      ) {
+      if (event.target?.name === "id" && event.target.value) {
+        state.variantId = String(event.target.value);
+        loadFeatures();
         return;
       }
 
-
-      state.variantId =
-        String(
-          event.target.value
-        );
-
-
-      loadFeatures();
-
+      // Check if an option change updated the hidden form [name="id"]
+      const form = event.target?.closest?.("form[action*='/cart/add']");
+      if (form) {
+        setTimeout(function () {
+          const idInput = form.querySelector('[name="id"]');
+          if (idInput && idInput.value && String(idInput.value) !== String(state.variantId)) {
+            state.variantId = String(idInput.value);
+            loadFeatures();
+          } else {
+            checkUrlVariant();
+          }
+        }, 50);
+      }
     }
   );
 
@@ -1961,6 +2055,10 @@
      ========================================================= */
   async function enhanceCartPreOrderDisplay() {
     try {
+      var isCartPage = window.location.pathname.indexOf("/cart") !== -1;
+      var hasDrawer = !!document.querySelector("cart-drawer, [data-cart-drawer], .cart-drawer");
+      if (!isCartPage && !hasDrawer) return;
+
       var cartRes = await fetch("/cart.js", { headers: { Accept: "application/json" } });
       if (!cartRes.ok) return;
       var cart = await cartRes.json();

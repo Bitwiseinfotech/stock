@@ -233,8 +233,18 @@ async function updateShopifyVariantPrice({
   price,
   compareAtPrice,
 }) {
-  const formattedProductId = ensureGid(productId, "Product");
+  let formattedProductId = productId ? ensureGid(productId, "Product") : "";
   const formattedVariantId = ensureGid(variantId, "ProductVariant");
+
+  // Automatically resolve true parent product ID if productId is missing or incorrectly passed variantId
+  if (!formattedProductId || cleanIdNumber(formattedProductId) === cleanIdNumber(formattedVariantId)) {
+    try {
+      const liveVar = await getShopifyVariant(shop, accessToken, formattedVariantId);
+      if (liveVar?.product?.id) {
+        formattedProductId = liveVar.product.id;
+      }
+    } catch (_) {}
+  }
 
   const formattedPrice = Number(price).toFixed(2);
 
@@ -255,6 +265,13 @@ async function updateShopifyVariantPrice({
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
+      if (!formattedProductId || cleanIdNumber(formattedProductId) === cleanIdNumber(formattedVariantId)) {
+        const liveVar = await getShopifyVariant(shop, accessToken, formattedVariantId).catch(() => null);
+        if (liveVar?.product?.id) {
+          formattedProductId = liveVar.product.id;
+        }
+      }
+
       const data = await shopifyGraphQL(
         shop,
         accessToken,
@@ -279,6 +296,15 @@ async function updateShopifyVariantPrice({
           })
           .join(", ");
 
+        // Auto-recover if productId was invalid
+        if (errors.includes("Product does not exist") && attempt < maxAttempts) {
+          const liveVar = await getShopifyVariant(shop, accessToken, formattedVariantId).catch(() => null);
+          if (liveVar?.product?.id) {
+            formattedProductId = liveVar.product.id;
+            continue;
+          }
+        }
+
         throw new Error(`Shopify price update failed: ${errors}`);
       }
 
@@ -287,7 +313,21 @@ async function updateShopifyVariantPrice({
         throw new Error("Shopify did not return the updated product variant.");
       }
 
-      return updatedVariant;
+      // Verification: Query Shopify again to confirm persistent live price matches expected price
+      const verifiedVar = await getShopifyVariant(shop, accessToken, formattedVariantId);
+      const verifiedPrice = Number(verifiedVar.price).toFixed(2);
+      if (verifiedPrice !== formattedPrice) {
+        throw new Error(`Shopify price verification failed: expected ${formattedPrice}, but Shopify returned ${verifiedPrice}`);
+      }
+      if (compareAtPrice !== undefined && compareAtPrice !== null) {
+        const expectedCompare = Number(compareAtPrice).toFixed(2);
+        const verifiedCompare = verifiedVar.compareAtPrice != null ? Number(verifiedVar.compareAtPrice).toFixed(2) : null;
+        if (verifiedCompare !== expectedCompare) {
+          throw new Error(`Shopify compareAtPrice verification failed: expected ${expectedCompare}, but Shopify returned ${verifiedCompare}`);
+        }
+      }
+
+      return verifiedVar;
     } catch (err) {
       lastError = err;
       if (attempt < maxAttempts) {
@@ -474,9 +514,35 @@ async function createMarkdownRule(
         },
       }).catch(() => { });
 
+      // Sync DeadStock in MongoDB
+      try {
+        const DeadStock = require("../models/DeadStock");
+        const cleanVar = cleanIdNumber(formattedVariantId);
+        await DeadStock.updateMany(
+          {
+            $or: [{ shopId: shop }, { shopId: `https://${shop}` }, { shopId: String(shop).replace(/^https?:\/\//i, "") }],
+            variantId: { $in: [formattedVariantId, cleanVar, `gid://shopify/ProductVariant/${cleanVar}`] },
+          },
+          {
+            $set: {
+              currentPrice: Number(updatedVariant.price),
+              compareAtPrice: existingRule.originalPrice,
+            },
+          }
+        ).catch(() => {});
+      } catch (_) {}
+
+      // Invalidate storefront cache
+      try {
+        const { clearStorefrontCache } = require("../controllers/storefrontController");
+        if (typeof clearStorefrontCache === "function") {
+          clearStorefrontCache(shop);
+        }
+      } catch (_) {}
+
       return {
         success: true,
-        message: `Progressive markdown updated. Starting discount: ${validated.startingDiscount}%, Current price: ₹${Number(updatedVariant.price)}. Next 24h evaluation: ${nextEvaluationAt.toLocaleString()}`,
+        message: `Progressive markdown updated. Starting discount: ${validated.startingDiscount}%, Current price: $${Number(updatedVariant.price)}. Next 24h evaluation: ${nextEvaluationAt.toLocaleString()}`,
         rule: existingRule,
         price: {
           originalPrice: existingRule.originalPrice,
@@ -578,9 +644,35 @@ async function createMarkdownRule(
       `Original ₹${originalPrice} → Current ₹${actualCurrentPrice} (${validated.startingDiscount}% discount). Next 24h evaluation: ${nextEvaluationAt.toISOString()}`
     );
 
+    // Sync DeadStock in MongoDB
+    try {
+      const DeadStock = require("../models/DeadStock");
+      const cleanVar = cleanIdNumber(formattedVariantId);
+      await DeadStock.updateMany(
+        {
+          $or: [{ shopId: shop }, { shopId: `https://${shop}` }, { shopId: String(shop).replace(/^https?:\/\//i, "") }],
+          variantId: { $in: [formattedVariantId, cleanVar, `gid://shopify/ProductVariant/${cleanVar}`] },
+        },
+        {
+          $set: {
+            currentPrice: actualCurrentPrice,
+            compareAtPrice: originalPrice,
+          },
+        }
+      ).catch(() => {});
+    } catch (_) {}
+
+    // Invalidate storefront cache
+    try {
+      const { clearStorefrontCache } = require("../controllers/storefrontController");
+      if (typeof clearStorefrontCache === "function") {
+        clearStorefrontCache(shop);
+      }
+    } catch (_) {}
+
     return {
       success: true,
-      message: `Progressive markdown enabled. Starting discount: ${validated.startingDiscount}%, Current price: ₹${actualCurrentPrice}. Next 24h evaluation: ${nextEvaluationAt.toLocaleString()}`,
+      message: `Progressive markdown enabled. Starting discount: ${validated.startingDiscount}%, Current price: $${actualCurrentPrice}. Next 24h evaluation: ${nextEvaluationAt.toLocaleString()}`,
       rule,
       price: {
         originalPrice,
@@ -623,24 +715,34 @@ async function processActiveMarkdownRules(shop = null) {
     // Stale lock threshold: 15 minutes
     const lockExpiryWindow = new Date(now.getTime() - 15 * 60 * 1000);
 
-    const queryFilter = {
-      $or: [{ status: "ACTIVE" }, { active: true }],
-      $or: [
-        { nextEvaluationAt: { $lte: now } },
-        { nextRunAt: { $lte: now } },
-      ],
-      $or: [
-        { processing: false, isProcessing: false },
-        { processing: { $exists: false } },
-        { lastProcessingAt: { $lt: lockExpiryWindow } },
-      ],
-    };
+    const andClauses = [
+      { $or: [{ status: "ACTIVE" }, { active: true }] },
+      {
+        $or: [
+          { nextEvaluationAt: { $lte: now } },
+          { nextRunAt: { $lte: now } },
+        ],
+      },
+      {
+        $or: [
+          { processing: false, isProcessing: false },
+          { processing: { $exists: false } },
+          { lastProcessingAt: { $lt: lockExpiryWindow } },
+        ],
+      },
+    ];
 
     if (shop) {
-      queryFilter.shop = shop;
+      andClauses.push({
+        $or: [
+          { shop },
+          { shop: String(shop).replace(/^https?:\/\//i, "") },
+          { shop: new RegExp(`^${shop}$`, "i") },
+        ],
+      });
     }
 
-    const dueRules = await MarkdownRule.find(queryFilter).lean();
+    const dueRules = await MarkdownRule.find({ $and: andClauses }).lean();
     if (!dueRules.length) {
       return { success: true, processed: 0 };
     }
@@ -653,11 +755,15 @@ async function processActiveMarkdownRules(shop = null) {
       const rule = await MarkdownRule.findOneAndUpdate(
         {
           _id: rawRule._id,
-          $or: [{ status: "ACTIVE" }, { active: true }],
-          $or: [
-            { processing: false, isProcessing: false },
-            { processing: { $exists: false } },
-            { lastProcessingAt: { $lt: lockExpiryWindow } },
+          $and: [
+            { $or: [{ status: "ACTIVE" }, { active: true }] },
+            {
+              $or: [
+                { processing: false, isProcessing: false },
+                { processing: { $exists: false } },
+                { lastProcessingAt: { $lt: lockExpiryWindow } },
+              ],
+            },
           ],
         },
         {
@@ -764,7 +870,7 @@ async function processActiveMarkdownRules(shop = null) {
 
           console.log(
             `[ProgressiveMarkdown Worker] Updating price for rule ${rule._id} (${reason}): ` +
-            `${rule.currentDiscount}% → ${newDiscount}% (₹${rule.originalPrice} → ₹${nextPrice})`
+            `${rule.currentDiscount}% → ${newDiscount}% ($${rule.originalPrice} → $${nextPrice})`
           );
 
           const updatedVariant = await updateShopifyVariantPrice({
@@ -777,6 +883,36 @@ async function processActiveMarkdownRules(shop = null) {
           });
 
           actualPrice = Number(updatedVariant.price);
+
+          // Sync DeadStock in MongoDB
+          try {
+            const DeadStock = require("../models/DeadStock");
+            const cleanVar = cleanIdNumber(rule.variantId);
+            await DeadStock.updateMany(
+              {
+                $or: [
+                  { shopId: rule.shop },
+                  { shopId: `https://${rule.shop}` },
+                  { shopId: String(rule.shop).replace(/^https?:\/\//i, "") },
+                ],
+                variantId: { $in: [rule.variantId, cleanVar, `gid://shopify/ProductVariant/${cleanVar}`] },
+              },
+              {
+                $set: {
+                  currentPrice: actualPrice,
+                  compareAtPrice: rule.originalPrice,
+                },
+              }
+            ).catch(() => {});
+          } catch (_) {}
+
+          // Invalidate storefront cache
+          try {
+            const { clearStorefrontCache } = require("../controllers/storefrontController");
+            if (typeof clearStorefrontCache === "function") {
+              clearStorefrontCache(rule.shop);
+            }
+          } catch (_) {}
         } else {
 
         }
@@ -860,6 +996,19 @@ async function processActiveMarkdownRules(shop = null) {
  */
 async function stopMarkdownRule(shop, ruleIdOrVariantId, accessToken = null, extraIds = {}) {
   try {
+    const connectDB = require("../config/mongodb");
+    const mongoose = require("mongoose");
+    if (mongoose.connection.readyState !== 1) {
+      await connectDB();
+    }
+
+    if (typeof shop === "object" && shop !== null) {
+      extraIds = shop;
+      ruleIdOrVariantId = shop.ruleId || shop.ruleIdOrVariantId || shop.id || ruleIdOrVariantId;
+      accessToken = shop.accessToken || accessToken;
+      shop = shop.shop;
+    }
+
     if (!shop) throw new Error("Shop domain is required.");
     if (!ruleIdOrVariantId && !extraIds?.productId && !extraIds?.variantId) {
       throw new Error("Rule ID, Variant ID, or Product ID is required.");
@@ -926,18 +1075,44 @@ async function stopMarkdownRule(shop, ruleIdOrVariantId, accessToken = null, ext
     if (!rules || rules.length === 0) {
       try {
         const targetVarGid = cleanId ? `gid://shopify/ProductVariant/${cleanId}` : "";
-        if (targetVarGid) {
-          const liveVar = await getShopifyVariant(shop, validToken, targetVarGid).catch(() => null);
-          if (liveVar && liveVar.compareAtPrice) {
-            await updateShopifyVariantPrice({
-              shop,
-              accessToken: validToken,
-              productId: liveVar.product?.id || `gid://shopify/Product/${cleanId}`,
-              variantId: targetVarGid,
-              price: Number(liveVar.compareAtPrice),
-              compareAtPrice: null,
-            });
+        let liveVar = targetVarGid ? await getShopifyVariant(shop, validToken, targetVarGid).catch(() => null) : null;
+        if (!liveVar && cleanId) {
+          // cleanId might be a productId
+          const prodGid = `gid://shopify/Product/${cleanId}`;
+          const prodQuery = `
+            query getProd($id: ID!) {
+              product(id: $id) {
+                variants(first: 20) {
+                  nodes { id price compareAtPrice product { id } }
+                }
+              }
+            }
+          `;
+          const pData = await shopifyGraphQL(shop, validToken, prodQuery, { id: prodGid }).catch(() => null);
+          const pVariants = pData?.product?.variants?.nodes || [];
+          for (const v of pVariants) {
+            if (v.compareAtPrice) {
+              restoredPrice = Number(v.compareAtPrice);
+              await updateShopifyVariantPrice({
+                shop,
+                accessToken: validToken,
+                productId: prodGid,
+                variantId: v.id,
+                price: Number(v.compareAtPrice),
+                compareAtPrice: null,
+              }).catch(() => {});
+            }
           }
+        } else if (liveVar && liveVar.compareAtPrice) {
+          restoredPrice = Number(liveVar.compareAtPrice);
+          await updateShopifyVariantPrice({
+            shop,
+            accessToken: validToken,
+            productId: liveVar.product?.id || `gid://shopify/Product/${cleanId}`,
+            variantId: targetVarGid,
+            price: Number(liveVar.compareAtPrice),
+            compareAtPrice: null,
+          });
         }
       } catch (err) {
         console.warn("[ProgressiveMarkdown] Fallback variant check skipped:", err.message);
@@ -969,26 +1144,30 @@ async function stopMarkdownRule(shop, ruleIdOrVariantId, accessToken = null, ext
       }
     }
 
-    // Permanently deactivate all matching markdown rules in DB
-    await MarkdownRule.updateMany(
-      {
-        $and: [shopFilter, idFilter],
-      },
-      {
-        $set: {
-          status: "COMPLETED",
-          active: false,
-          currentDiscount: 0,
-          processing: false,
-          isProcessing: false,
-          nextEvaluationAt: null,
-          nextRunAt: null,
-          lastExecutedAt: new Date(),
-          lastEvaluationReason: "MANUALLY_STOPPED",
-          lastError: "",
-        },
+    // 1. Sync DeadStock collection in MongoDB immediately so app reflects restored price
+    try {
+      const DeadStock = require("../models/DeadStock");
+      if (restoredPrice) {
+        await DeadStock.updateMany(
+          {
+            $and: [shopFilter, idFilter],
+          },
+          {
+            $set: {
+              currentPrice: restoredPrice,
+              compareAtPrice: null,
+            },
+          }
+        ).catch(() => {});
       }
-    );
+    } catch (dsErr) {
+      console.warn("[ProgressiveMarkdown] DeadStock sync warning:", dsErr.message);
+    }
+
+    // 2. Permanently delete all matching markdown rules in DB
+    await MarkdownRule.deleteMany({
+      $and: [shopFilter, idFilter],
+    });
 
     // Also deactivate SmartBadgeAssignment and SmartBadgeApplication so storefront does not re-enable
     try {
@@ -1206,33 +1385,52 @@ async function getStorefrontMarkdownData(shop, productId, variantId) {
   const cleanVarNum = cleanIdNumber(variantId);
   const cleanProdNum = cleanIdNumber(productId);
 
-  const orConditions = [];
+  let rule = null;
   if (cleanVarNum) {
-    orConditions.push(
-      { variantId: cleanVarNum },
-      { variantId: `gid://shopify/ProductVariant/${cleanVarNum}` },
-      { variantId: String(variantId) }
-    );
-  }
-  if (cleanProdNum) {
-    orConditions.push(
-      { productId: cleanProdNum },
-      { productId: `gid://shopify/Product/${cleanProdNum}` },
-      { productId: String(productId) }
-    );
+    const variantQuery = {
+      $and: [
+        shopFilter,
+        { $or: [{ status: "ACTIVE" }, { active: true }] },
+        { status: { $ne: "COMPLETED" } },
+        { active: { $ne: false } },
+        {
+          $or: [
+            { variantId: cleanVarNum },
+            { variantId: `gid://shopify/ProductVariant/${cleanVarNum}` },
+            { variantId: String(variantId) },
+          ],
+        },
+      ],
+    };
+    rule = await MarkdownRule.findOne(variantQuery).sort({ createdAt: -1 }).lean();
   }
 
-  const query = {
-    $and: [
-      shopFilter,
-      { $or: [{ status: "ACTIVE" }, { active: true }] },
-      { status: { $ne: "COMPLETED" } },
-      { active: { $ne: false } },
-      ...(orConditions.length > 0 ? [{ $or: orConditions }] : []),
-    ],
-  };
+  if (!rule && cleanProdNum) {
+    const prodQuery = {
+      $and: [
+        shopFilter,
+        { $or: [{ status: "ACTIVE" }, { active: true }] },
+        { status: { $ne: "COMPLETED" } },
+        { active: { $ne: false } },
+        {
+          $or: [
+            { productId: cleanProdNum },
+            { productId: `gid://shopify/Product/${cleanProdNum}` },
+            { productId: String(productId) },
+          ],
+        },
+        {
+          $or: [
+            { variantId: { $exists: false } },
+            { variantId: "" },
+            { variantId: null },
+          ],
+        },
+      ],
+    };
+    rule = await MarkdownRule.findOne(prodQuery).sort({ createdAt: -1 }).lean();
+  }
 
-  const rule = await MarkdownRule.findOne(query).sort({ createdAt: -1 }).lean();
   if (!rule || rule.currentDiscount <= 0 || rule.active === false || rule.status !== "ACTIVE") {
     return { enabled: false };
   }
@@ -1258,6 +1456,195 @@ async function getStorefrontMarkdownData(shop, productId, variantId) {
   };
 }
 
+/**
+ * Immediate rule evaluation (can be called manually or by API/test).
+ * Evaluates 24h sales performance (or forced discount if options.forceDiscount is provided),
+ * computes new price strictly from originalPrice (no compounding),
+ * updates Shopify variant price, confirms persistent price, updates DB, syncs DeadStock,
+ * and clears storefront cache.
+ */
+async function evaluateMarkdownRuleNow(shop, ruleIdOrVariantId, options = {}) {
+  const connectDB = require("../config/mongodb");
+  const mongoose = require("mongoose");
+  if (mongoose.connection.readyState !== 1) {
+    await connectDB();
+  }
+
+  const cleanId = String(ruleIdOrVariantId || "").replace(/\D/g, "");
+  const isObjectId = /^[0-9a-fA-F]{24}$/.test(String(ruleIdOrVariantId || "").trim());
+
+  const shopFilter = {
+    $or: [
+      { shop },
+      { shop: String(shop).replace(/^https?:\/\//i, "") },
+      { shop: new RegExp(`^${shop}$`, "i") },
+    ],
+  };
+
+  const idFilters = [];
+  if (isObjectId) idFilters.push({ _id: ruleIdOrVariantId });
+  if (cleanId) {
+    idFilters.push(
+      { variantId: `gid://shopify/ProductVariant/${cleanId}` },
+      { variantId: cleanId },
+      { productId: `gid://shopify/Product/${cleanId}` },
+      { productId: cleanId }
+    );
+  }
+
+  const rule = await MarkdownRule.findOne({
+    $and: [
+      shopFilter,
+      { $or: idFilters },
+      { $or: [{ status: "ACTIVE" }, { active: true }] },
+    ],
+  });
+
+  if (!rule) {
+    throw new Error(`Active Progressive Markdown rule not found for ${ruleIdOrVariantId}`);
+  }
+
+  const store = await Store.findOne({
+    $or: [{ shop: rule.shop }, { shop: String(rule.shop).replace(/^https?:\/\//i, "") }],
+  }).lean();
+
+  if (!store?.accessToken) {
+    throw new Error(`Shopify access token not found for shop ${rule.shop}`);
+  }
+
+  const accessToken = store.accessToken;
+  const now = new Date();
+
+  const unitsSold = options.forceUnitsSold !== undefined
+    ? Number(options.forceUnitsSold)
+    : await getUnitsSoldLast24Hours(rule.shop, accessToken, rule.variantId, rule.productId);
+
+  let newDiscount;
+  let reason;
+  let actionStatus;
+
+  if (options.forceDiscount !== undefined) {
+    newDiscount = Math.min(Math.max(Number(options.forceDiscount), rule.minimumDiscount || 5), rule.maximumDiscount || 50);
+    reason = "MANUAL_EVALUATION";
+    actionStatus = "SUCCESS";
+  } else {
+    const calc = calculateNextDiscount({
+      currentDiscount: rule.currentDiscount,
+      unitsSold,
+      increasePercent: rule.increasePercent ?? rule.incrementPercent ?? 10,
+      decreasePercent: rule.decreasePercent ?? 3,
+      minimumDiscount: rule.minimumDiscount ?? 5,
+      maximumDiscount: rule.maximumDiscount ?? 50,
+    });
+    newDiscount = calc.newDiscount;
+    reason = calc.reason;
+    actionStatus = calc.actionStatus;
+  }
+
+  let actualPrice = rule.currentPrice;
+  const oldDiscount = rule.currentDiscount;
+
+  if (newDiscount !== rule.currentDiscount || options.forceUpdate) {
+    // Calculate new price strictly from originalPrice (no compound discounting)
+    const nextPrice = calculateMarkdownPrice(rule.originalPrice, newDiscount);
+
+    console.log(
+      `[ProgressiveMarkdown EvaluateNow] Rule ${rule._id}: ${oldDiscount}% → ${newDiscount}% ` +
+      `($${rule.originalPrice} → $${nextPrice})`
+    );
+
+    const updatedVariant = await updateShopifyVariantPrice({
+      shop: rule.shop,
+      accessToken,
+      productId: rule.productId,
+      variantId: rule.variantId,
+      price: nextPrice,
+      compareAtPrice: rule.originalPrice,
+    });
+
+    actualPrice = Number(updatedVariant.price);
+
+    // Sync DeadStock in MongoDB
+    try {
+      const DeadStock = require("../models/DeadStock");
+      const cleanVar = cleanIdNumber(rule.variantId);
+      await DeadStock.updateMany(
+        {
+          $or: [
+            { shopId: rule.shop },
+            { shopId: `https://${rule.shop}` },
+            { shopId: String(rule.shop).replace(/^https?:\/\//i, "") },
+          ],
+          variantId: { $in: [rule.variantId, cleanVar, `gid://shopify/ProductVariant/${cleanVar}`] },
+        },
+        {
+          $set: {
+            currentPrice: actualPrice,
+            compareAtPrice: rule.originalPrice,
+          },
+        }
+      ).catch(() => {});
+    } catch (_) {}
+
+    // Invalidate storefront cache
+    try {
+      const { clearStorefrontCache } = require("../controllers/storefrontController");
+      if (typeof clearStorefrontCache === "function") {
+        clearStorefrontCache(rule.shop);
+      }
+    } catch (_) {}
+  }
+
+  const nextEval = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  rule.currentDiscount = newDiscount;
+  rule.currentPrice = actualPrice;
+  rule.lastEvaluatedAt = now;
+  rule.lastExecutedAt = now;
+  rule.nextEvaluationAt = nextEval;
+  rule.nextRunAt = nextEval;
+  rule.lastSalesCount = unitsSold;
+  rule.lastEvaluationReason = reason;
+  rule.lastError = "";
+  rule.processing = false;
+  rule.isProcessing = false;
+  rule.status = "ACTIVE";
+  rule.active = true;
+
+  await rule.save();
+
+  await DeadStockAction.create({
+    shop: rule.shop,
+    productId: rule.productId,
+    variantId: rule.variantId,
+    actionType: "PROGRESSIVE_MARKDOWN",
+    status: actionStatus,
+    discountPercent: newDiscount,
+    executedAt: now,
+    metadata: {
+      ruleId: rule._id,
+      oldDiscount,
+      newDiscount,
+      unitsSold,
+      reason,
+      originalPrice: rule.originalPrice,
+      currentPrice: actualPrice,
+      nextEvaluationAt: nextEval,
+      pricingMode: "DIRECT_VARIANT_PRICE",
+    },
+  }).catch(() => {});
+
+  return {
+    success: true,
+    oldDiscount,
+    newDiscount,
+    originalPrice: rule.originalPrice,
+    currentPrice: actualPrice,
+    unitsSold,
+    reason,
+    rule,
+  };
+}
+
 module.exports = {
   validateMarkdownSettings,
   calculateNextDiscount,
@@ -1266,6 +1653,7 @@ module.exports = {
   createMarkdownRule,
   processActiveMarkdownRules,
   processDueMarkdownRules: processActiveMarkdownRules,
+  evaluateMarkdownRuleNow,
   stopMarkdownRule,
   pauseMarkdownRule,
   getMarkdownRules,

@@ -62,6 +62,13 @@ async function getHighDemandStorefrontWidget(req, res) {
   try {
     await ensureConnected();
 
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Shopify-Shop-Domain, x-shop-domain");
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
+
     const shop = normalizeShop(
       req.query.shop ||
       req.headers["x-shopify-shop-domain"] ||
@@ -232,12 +239,16 @@ async function getHighDemandStorefrontWidget(req, res) {
 
     const isSmartAssignmentLowStock = smartAssignment && smartAssignment.status === "ACTIVE" && smartAssignment.badgeType === "LOW_STOCK";
 
+    const isExplicitlyEnabledOnProduct =
+      parseBoolean(configDoc?.lowStockBadge?.enabled) ||
+      parseBoolean(configDoc?.urgencyBadgeEnabled) ||
+      parseBoolean(highDemandDoc?.lowStockBadge?.enabled) ||
+      parseBoolean(highDemandDoc?.urgencyBadgeEnabled);
+
     const isLowStockBadgeConfigured =
       Boolean(isSmartAssignmentLowStock) ||
       Boolean(smartBadgeLowStock) ||
-      (isGlobalLowStockEnabled &&
-        (parseBoolean(configDoc?.lowStockBadge?.enabled) ||
-         parseBoolean(configDoc?.urgencyBadgeEnabled)));
+      (isGlobalLowStockEnabled && isExplicitlyEnabledOnProduct);
 
     const isPreOrderConfigured =
       parseBoolean(configDoc?.preOrder?.enabled) ||
@@ -245,8 +256,15 @@ async function getHighDemandStorefrontWidget(req, res) {
       parseBoolean(highDemandDoc?.preOrder?.enabled) ||
       parseBoolean(highDemandDoc?.preOrderEnabled);
 
-    // Send all enabled controls so they can render line by line on the storefront
-    const showLowStockBadge = isLowStockBadgeConfigured && currentStock <= threshold;
+    // Send all enabled controls so they can render line by line on the storefront.
+    // If explicitly enabled on this product by merchant, display whenever currentStock > 0!
+    // Otherwise (general/global rule), check currentStock <= threshold
+    const showLowStockBadge = isLowStockBadgeConfigured && currentStock > 0 && (
+      isExplicitlyEnabledOnProduct ||
+      Boolean(isSmartAssignmentLowStock) ||
+      Boolean(smartBadgeLowStock) ||
+      currentStock <= threshold
+    );
     const showPreOrder = false;
     const isOverallShown = showLowStockBadge;
 
@@ -254,7 +272,7 @@ async function getHighDemandStorefrontWidget(req, res) {
     let badgeSubtext = "";
 
     if (showLowStockBadge) {
-      const templateText = globalLowStockConfig?.badgeText || "🔥 Only {stock} left in stock!";
+      const templateText = configDoc?.badgeText || globalLowStockConfig?.badgeText || "🔥 Only {stock} left in stock!";
       badgeMessage = currentStock > 0
         ? templateText.replace(/\{stock\}/gi, String(currentStock))
         : `🔥 High Demand — Almost Sold Out!`;

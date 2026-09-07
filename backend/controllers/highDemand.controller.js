@@ -976,6 +976,13 @@ async function updateStorefrontConfig(req, res) {
       { $set: updateFields }
     ).catch(() => {});
 
+    try {
+      const { clearStorefrontCache } = require("./storefrontController");
+      if (typeof clearStorefrontCache === "function") {
+        clearStorefrontCache(shop);
+      }
+    } catch (_) {}
+
     return res.status(200).json({
       success: true,
       message: "Storefront configuration updated successfully.",

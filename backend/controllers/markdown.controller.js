@@ -144,11 +144,7 @@ async function stopMarkdown(req, res) {
     try {
         const shop = getShopFromRequest(req);
 
-        const rule =
-            await stopMarkdownRule({
-                shop,
-                ruleId: req.params.id,
-            });
+        const rule = await stopMarkdownRule(shop, req.params.id);
 
         return res.json({
             success: true,

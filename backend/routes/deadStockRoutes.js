@@ -43,6 +43,7 @@ router.post(
 router.post("/:variantId/collection", deadStockController.addToClearanceCollection);
 router.get("/:variantId/markdown", deadStockController.getProgressiveMarkdown);
 router.post("/:variantId/markdown", deadStockController.createProgressiveMarkdown);
+router.post("/:variantId/markdown/evaluate", deadStockController.evaluateProgressiveMarkdown);
 router.delete("/:variantId/markdown", deadStockController.stopProgressiveMarkdown);
 router.post("/:variantId/markdown/stop", deadStockController.stopProgressiveMarkdown);
 router.post("/:variantId/markdown/pause", deadStockController.pauseProgressiveMarkdown);

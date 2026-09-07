@@ -108,6 +108,11 @@ async function createShopifyBundleDiscount(shop, accessToken, deadStockProductId
           },
         },
       },
+      minimumRequirement: {
+        quantity: {
+          greaterThanOrEqualToQuantity: "2",
+        },
+      },
     },
   };
 
@@ -553,8 +558,8 @@ async function createBOGOBundle(
   const finalDeadStockImage = deadStockInfo.image || deadStockImage || "";
   const finalFreeImage = freeInfo.image || freeProductImage || companionImage || "";
 
-  const p1 = Number(deadStockPrice || deadStockInfo.price || 0);
-  const p2 = Number(companionPrice || freeInfo.price || 0);
+  const p1 = Number(deadStockInfo?.price != null && deadStockInfo.price > 0 ? deadStockInfo.price : (deadStockPrice || 0));
+  const p2 = Number(freeInfo?.price != null && freeInfo.price > 0 ? freeInfo.price : (companionPrice || 0));
   const originalPrice = Number((p1 + p2).toFixed(2));
   const bundlePrice = Number(p1.toFixed(2)); // In BOGO, customer only pays for the dead-stock product
   const savings = Number(p2.toFixed(2));     // Savings is 100% of the free product value
@@ -604,6 +609,8 @@ async function createBOGOBundle(
       deadStockVariantId: finalDeadStockVariantId,
       companionProductId: finalFreeProductId,
       companionVariantId: finalFreeVariantId,
+      deadStockPrice: p1,
+      companionPrice: p2,
       offerType: "BOGO",
       freeProductId: finalFreeProductId,
       freeProductVariantId: finalFreeVariantId,
@@ -767,8 +774,8 @@ async function createNormalBundle(
   const finalDeadStockImage = deadStockInfo.image || deadStockImage || "";
   const finalCompanionImage = companionInfo.image || companionImage || "";
 
-  const p1 = Number(deadStockPrice || deadStockInfo.price || 0);
-  const p2 = Number(companionPrice || companionInfo.price || 0);
+  const p1 = Number(deadStockInfo?.price != null && deadStockInfo.price > 0 ? deadStockInfo.price : (deadStockPrice || 0));
+  const p2 = Number(companionInfo?.price != null && companionInfo.price > 0 ? companionInfo.price : (companionPrice || 0));
   const originalPrice = Number((p1 + p2).toFixed(2));
   const bundlePrice = originalPrice > 0 ? Number((originalPrice * (1 - pct / 100)).toFixed(2)) : 0;
   const savings = Number(Math.max(0, originalPrice - bundlePrice).toFixed(2));
@@ -850,6 +857,8 @@ async function createNormalBundle(
       deadStockVariantId: finalDeadStockVariantId,
       companionProductId: finalCompanionProductId,
       companionVariantId: finalCompanionVariantId,
+      deadStockPrice: p1,
+      companionPrice: p2,
       offerType: "NO_OFFER",
       freeProductId: "",
       freeProductVariantId: "",

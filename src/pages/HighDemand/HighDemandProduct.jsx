@@ -794,7 +794,7 @@ const dynamicAnalysis = getDynamicAnalysis(
         title={title}
         subtitle={`SKU: ${item.sku || "N/A"}`}
         titleMetadata={
-          <InlineStack gap="200" blockAlign="center">
+          <InlineStack gap="200" blockAlign="center" wrap={true}>
             <Badge tone={dynamicAnalysis.riskTone}>
               {dynamicAnalysis.riskLabel}
             </Badge>

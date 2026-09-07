@@ -970,9 +970,24 @@ async function createProgressiveMarkdown(req, res) {
     const accessToken = await getAccessToken(req, shopId);
     if (!accessToken) return res.status(403).json({ success: false, message: "Missing access token." });
 
+    let finalProdId = req.body?.productId || "";
+    const finalVarId = variantId || targetId;
+    if (!finalProdId) {
+      const deadItem = await DeadStock.findOne({
+        $or: [
+          { variantId: finalVarId },
+          { variantId: `gid://shopify/ProductVariant/${String(finalVarId).replace(/\D/g, "")}` },
+          { variantId: String(finalVarId).replace(/\D/g, "") },
+        ],
+      }).lean().catch(() => null);
+      if (deadItem?.productId) {
+        finalProdId = deadItem.productId;
+      }
+    }
+
     const result = await progressiveMarkdownService.createMarkdownRule(shopId, accessToken, {
-      productId: targetId,
-      variantId: variantId || targetId,
+      productId: finalProdId || targetId,
+      variantId: finalVarId,
       startingDiscount,
       increasePercent: increasePercent ?? incrementPercent ?? 10,
       decreasePercent,
@@ -1032,6 +1047,30 @@ async function pauseProgressiveMarkdown(req, res) {
   } catch (error) {
     console.error("Pause Markdown Error:", error);
     return res.status(500).json({ success: false, message: error.message || "Failed to pause markdown rule." });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/dead-stock/:variantId/markdown/evaluate
+// ─────────────────────────────────────────────────────────────────────────────
+async function evaluateProgressiveMarkdown(req, res) {
+  try {
+    await ensureConnected();
+    const shopId = req.shopId || req.query.shop || req.body?.shop || req.headers["x-shopify-shop-domain"];
+    const targetId = getParamId(req);
+    const { forceDiscount, forceUnitsSold, forceUpdate } = req.body || {};
+
+    if (!shopId) return res.status(401).json({ success: false, message: "Shop domain is required." });
+
+    const result = await progressiveMarkdownService.evaluateMarkdownRuleNow(shopId, targetId, {
+      forceDiscount,
+      forceUnitsSold,
+      forceUpdate,
+    });
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Evaluate Markdown Error:", error);
+    return res.status(500).json({ success: false, message: error.message || "Failed to evaluate markdown rule." });
   }
 }
 
@@ -1598,6 +1637,7 @@ module.exports = {
   createProgressiveMarkdown,
   stopProgressiveMarkdown,
   pauseProgressiveMarkdown,
+  evaluateProgressiveMarkdown,
   getProgressiveMarkdown,
   listProgressiveMarkdownRules,
   createBundle,

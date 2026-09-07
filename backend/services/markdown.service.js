@@ -9,5 +9,6 @@ module.exports = {
   getMarkdownRules: progressiveMarkdownService.getMarkdownRules,
   getMarkdownRuleByVariant: progressiveMarkdownService.getMarkdownRuleByVariant,
   getStorefrontMarkdownData: progressiveMarkdownService.getStorefrontMarkdownData,
+  evaluateMarkdownRuleNow: progressiveMarkdownService.evaluateMarkdownRuleNow,
 };
 

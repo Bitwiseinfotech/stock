@@ -89,8 +89,8 @@ async function computeDashboardMetrics(shop) {
     LaunchPreOrder.countDocuments({ ...shopFilter, preOrderEnabled: true }).catch(() => 0),
     HighDemandStorefront.countDocuments({ ...shopFilter, urgencyBadgeEnabled: true }).catch(() => 0),
     SmartBadgeAssignment.countDocuments({ ...shopFilter, status: "ACTIVE" }).catch(() => 0),
-    HighDemand.find({ ...shopFilter }).select("price currentPrice stock currentStock riskLevel reorderQuantity").lean().catch(() => []),
-    DeadStock.find({ ...shopFilter }).select("cashTiedUp price stock").lean().catch(() => []),
+    HighDemand.find({ ...shopFilter }).select("variantId productId price currentPrice stock currentStock riskLevel last30DaysSales salesLast30Days reorderQuantity").lean().catch(() => []),
+    DeadStock.find({ ...shopFilter }).select("variantId productId cashTiedUp price currentPrice costPrice stock status daysUnsold").lean().catch(() => []),
     MarkdownRule.find({ ...shopFilter, status: "ACTIVE" }).select("currentDiscount productTitle updatedAt createdAt").sort({ updatedAt: -1 }).limit(2).lean().catch(() => []),
     Bundle.find({ ...shopFilter }).select("bundleTitle title updatedAt createdAt").sort({ updatedAt: -1 }).limit(2).lean().catch(() => []),
     LaunchPreOrder.find({ ...shopFilter }).select("productTitle title updatedAt createdAt").sort({ updatedAt: -1 }).limit(2).lean().catch(() => []),
@@ -100,7 +100,6 @@ async function computeDashboardMetrics(shop) {
   ]);
 
   // 2. Fetch live Shopify orders & Catalog products if token is available
-  // Optimized: remove unused lineItems and nested queries to minimize latency & GraphQL cost
   let liveOrders = [];
   let catalogVariants = [];
   let liveCatalogInventory = 0;
@@ -113,8 +112,19 @@ async function computeDashboardMetrics(shop) {
             orders(first: 250, sortKey: CREATED_AT, reverse: true) {
               nodes {
                 id
+                name
                 createdAt
                 totalPriceSet { shopMoney { amount } }
+                customAttributes { key value }
+                lineItems(first: 20) {
+                  nodes {
+                    title
+                    quantity
+                    originalTotalSet { shopMoney { amount } }
+                    customAttributes { key value }
+                    variant { id price product { id title } }
+                  }
+                }
               }
             }
           }
@@ -125,7 +135,7 @@ async function computeDashboardMetrics(shop) {
               nodes {
                 id
                 title
-                variants(first: 20) {
+                variants(first: 50) {
                   nodes {
                     id
                     title
@@ -161,70 +171,164 @@ async function computeDashboardMetrics(shop) {
     }
   }
 
-    // 3. Real Active Automations Count
-    const totalActiveAutomations =
-      clearanceSalesCount +
-      bundlesCount +
-      markdownRulesCount +
-      launchPreOrdersCount +
-      Math.max(urgencyStorefrontCount, smartBadgesCount);
+  // 3. Real Active Automations Count
+  const totalActiveAutomations =
+    clearanceSalesCount +
+    bundlesCount +
+    markdownRulesCount +
+    launchPreOrdersCount +
+    urgencyStorefrontCount +
+    smartBadgesCount;
 
-    // 4. Calculate Total Revenue Recovered from real store orders
+  // 4. Real Cash Recovered and Strategy Attribution from Orders
+  const activeClearanceIds = new Set(
+    (await ClearanceSale.find({ ...shopFilter, status: { $ne: "INACTIVE" } }).select("productId variantId").lean().catch(() => []))
+      .map((c) => String(c.variantId || c.productId || "").replace(/\D/g, ""))
+      .filter(Boolean)
+  );
+
+  const activeMarkdownIds = new Set(
+    (await MarkdownRule.find({ ...shopFilter, status: "ACTIVE", active: { $ne: false } }).select("productId variantId").lean().catch(() => []))
+      .map((m) => String(m.variantId || m.productId || "").replace(/\D/g, ""))
+      .filter(Boolean)
+  );
+
+  const activeBundleIds = new Set(
+    (await Bundle.find({ ...shopFilter, status: { $ne: "INACTIVE" } }).select("productId variantId companionProductId companionVariantId").lean().catch(() => []))
+      .flatMap((b) => [b.productId, b.variantId, b.companionProductId, b.companionVariantId])
+      .map((id) => String(id || "").replace(/\D/g, ""))
+      .filter(Boolean)
+  );
+
+  let clearanceRecovered = 0;
+  let bundleRecovered = 0;
+  let markdownRecovered = 0;
+  let preOrderRecovered = 0;
+
+  for (const o of liveOrders) {
+    const orderAttrs = o.customAttributes || [];
+    const isOrderPreorder = orderAttrs.some((a) =>
+      a.key?.includes("preorder") ||
+      a.key?.includes("Pre-Order") ||
+      a.key?.includes("Deposit Paid")
+    );
+
+    for (const li of o.lineItems?.nodes || []) {
+      const lineAmt = parseFloat(li.originalTotalSet?.shopMoney?.amount || 0);
+      const liAttrs = li.customAttributes || [];
+      const vNum = String(li.variant?.id || "").replace(/\D/g, "");
+      const pNum = String(li.variant?.product?.id || "").replace(/\D/g, "");
+
+      if (
+        isOrderPreorder ||
+        liAttrs.some((a) => a.key?.includes("preorder") || a.key?.includes("Pre-Order") || a.key?.includes("Deposit"))
+      ) {
+        preOrderRecovered += lineAmt;
+      } else if (
+        liAttrs.some((a) => a.key?.includes("Clearance")) ||
+        activeClearanceIds.has(vNum) ||
+        activeClearanceIds.has(pNum)
+      ) {
+        clearanceRecovered += lineAmt;
+      } else if (
+        liAttrs.some((a) => a.key?.includes("bundle") || a.key?.includes("Bundle")) ||
+        activeBundleIds.has(vNum) ||
+        activeBundleIds.has(pNum)
+      ) {
+        bundleRecovered += lineAmt;
+      } else if (
+        liAttrs.some((a) => a.key?.includes("markdown") || a.key?.includes("Markdown")) ||
+        activeMarkdownIds.has(vNum) ||
+        activeMarkdownIds.has(pNum)
+      ) {
+        markdownRecovered += lineAmt;
+      }
+    }
+  }
+
+  clearanceRecovered = Math.round(clearanceRecovered);
+  bundleRecovered = Math.round(bundleRecovered);
+  markdownRecovered = Math.round(markdownRecovered);
+  preOrderRecovered = Math.round(preOrderRecovered);
+
+  let totalCashRecovered = clearanceRecovered + bundleRecovered + markdownRecovered + preOrderRecovered;
+  if (totalCashRecovered === 0 && liveOrders.length > 0) {
     let totalOrderRevenue = 0;
     for (const o of liveOrders) {
       totalOrderRevenue += parseFloat(o.totalPriceSet?.shopMoney?.amount || 0);
     }
-    const totalCashRecovered = Math.round(totalOrderRevenue);
+    totalCashRecovered = Math.round(totalOrderRevenue);
+    clearanceRecovered = Math.round(totalCashRecovered * (clearanceSalesCount / Math.max(1, totalActiveAutomations)));
+    markdownRecovered = Math.round(totalCashRecovered * (markdownRulesCount / Math.max(1, totalActiveAutomations)));
+    preOrderRecovered = Math.max(0, totalCashRecovered - clearanceRecovered - markdownRecovered);
+  }
 
-    // Dynamic proportionate distribution across active channels
-    const totalRuleWeight = Math.max(1, totalActiveAutomations);
-    const clearanceWeight = clearanceSalesCount / totalRuleWeight;
-    const bundleWeight = bundlesCount / totalRuleWeight;
-    const markdownWeight = markdownRulesCount / totalRuleWeight;
-    const preOrderBadgeWeight = (launchPreOrdersCount + Math.max(urgencyStorefrontCount, smartBadgesCount)) / totalRuleWeight;
-
-    const clearanceRecovered = Math.round(totalCashRecovered * (clearanceWeight || 0.25));
-    const bundleRecovered = Math.round(totalCashRecovered * (bundleWeight || 0.2));
-    const markdownRecovered = Math.round(totalCashRecovered * (markdownWeight || 0.35));
-    const urgencyRecovered = Math.max(0, totalCashRecovered - clearanceRecovered - bundleRecovered - markdownRecovered);
-
-    // 5. Real High Demand & Revenue at Risk
-    const highRiskItems = highDemandItems.filter((h) =>
-      ["CRITICAL", "HIGH", "Critical", "High"].includes(h.riskLevel)
-    );
-    let revenueAtRisk = 0;
-    for (const item of highRiskItems) {
-      const price = Number(item.price || item.currentPrice || 0);
-      const stock = Number(item.stock || item.currentStock || 0);
-      revenueAtRisk += Math.max(0, price * (stock > 0 ? stock : 1));
-    }
-    if (revenueAtRisk === 0 && highRiskItems.length > 0) {
-      // If stock is 0 (out of stock), calculate from target reorder or unit price
-      for (const item of highRiskItems) {
-        const price = Number(item.price || item.currentPrice || 0);
-        const reorderQty = Number(item.reorderQuantity) || 5;
-        revenueAtRisk += price > 0 ? price * reorderQty : 2500;
+  // 5. Real High Demand & Revenue at Risk
+  const priceLookup = new Map();
+  for (const cv of catalogVariants) {
+    if (cv.price > 0) {
+      if (cv.variantId) {
+        priceLookup.set(cv.variantId, cv.price);
+        priceLookup.set(String(cv.variantId).replace(/\D/g, ""), cv.price);
+      }
+      if (cv.productId) {
+        priceLookup.set(cv.productId, cv.price);
+        priceLookup.set(String(cv.productId).replace(/\D/g, ""), cv.price);
       }
     }
-    const highDemandRiskCount = highRiskItems.length > 0 ? highRiskItems.length : highDemandItems.length;
-
-    // 6. Real Dead Stock Cash Tied Up
-    let deadStockCashTiedUp = 0;
-    let deadStockSkuCount = 0;
-
-    if (deadStockDocs.length > 0) {
-      for (const d of deadStockDocs) {
-        deadStockCashTiedUp += Number(d.cashTiedUp) || (Number(d.price || 0) * Number(d.stock || 0));
-        deadStockSkuCount++;
+  }
+  for (const d of deadStockDocs) {
+    const p = Number(d.currentPrice || d.price || d.costPrice || 0);
+    if (p > 0) {
+      if (d.variantId && !priceLookup.has(d.variantId)) {
+        priceLookup.set(d.variantId, p);
+        priceLookup.set(String(d.variantId).replace(/\D/g, ""), p);
       }
-    } else if (catalogVariants.length > 0) {
-      // Calculate from catalog zero/negative inventory variants
-      const zeroStockVariants = catalogVariants.filter((v) => v.inventoryQuantity <= 0);
-      deadStockSkuCount = zeroStockVariants.length;
-      for (const zv of zeroStockVariants) {
-        deadStockCashTiedUp += zv.price || 0;
+      if (d.productId && !priceLookup.has(d.productId)) {
+        priceLookup.set(d.productId, p);
+        priceLookup.set(String(d.productId).replace(/\D/g, ""), p);
       }
     }
+  }
+
+  const highRiskItems = highDemandItems.filter((h) =>
+    ["CRITICAL", "HIGH", "Critical", "High"].includes(h.riskLevel)
+  );
+  let revenueAtRisk = 0;
+  for (const item of highRiskItems) {
+    const vId = item.variantId;
+    const pId = item.productId;
+    const price = priceLookup.get(vId) || priceLookup.get(pId) || Number(item.price || item.currentPrice || 0);
+    const stock = Number(item.currentStock ?? item.stock ?? 0);
+    const sales30d = Number(item.last30DaysSales ?? item.salesLast30Days ?? 0);
+    const reorderQty = Number(item.reorderQuantity) || 5;
+
+    if (price > 0) {
+      if (stock <= 0) {
+        revenueAtRisk += price * (sales30d > 0 ? sales30d : reorderQty);
+      } else {
+        revenueAtRisk += price * stock;
+      }
+    }
+  }
+  const highDemandRiskCount = highRiskItems.length > 0 ? highRiskItems.length : highDemandItems.length;
+
+  // 6. Real Dead Stock Cash Tied Up & SKU Count (matching Dead Stock Engine & getDeadStockSummary)
+  let deadStockCashTiedUp = 0;
+  let deadStockSkuCount = 0;
+
+  const deadItems = deadStockDocs.filter(
+    (d) => d.status === "dead_stock" || (d.daysUnsold != null && d.daysUnsold >= 60)
+  );
+  const deadItemsToCount = deadItems.length > 0 ? deadItems : deadStockDocs.filter((d) => (d.cashTiedUp || 0) > 0);
+
+  for (const d of deadItemsToCount) {
+    const cash = Number(d.cashTiedUp) || (Number(d.currentPrice || d.price || 0) * Number(d.stock || 0));
+    if (cash > 0) {
+      deadStockCashTiedUp += cash;
+      deadStockSkuCount++;
+    }
+  }
 
     // 7. REAL SHOPIFY STORE DATA: Daily, Weekly & Monthly Trends
     const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -479,7 +583,7 @@ async function computeDashboardMetrics(shop) {
           title: "Clearance Sale",
           badgesUsed: clearanceSalesCount,
           cashRecovered: clearanceRecovered,
-          percentage: Math.round((clearanceRecovered / Math.max(1, totalCashRecovered)) * 100),
+          percentage: totalCashRecovered > 0 ? Math.round((clearanceRecovered / totalCashRecovered) * 100) : 0,
           color: "#10B981",
           link: "/app/dead-stock",
         },
@@ -489,7 +593,7 @@ async function computeDashboardMetrics(shop) {
           title: "Bundle Offer",
           badgesUsed: bundlesCount,
           cashRecovered: bundleRecovered,
-          percentage: Math.round((bundleRecovered / Math.max(1, totalCashRecovered)) * 100),
+          percentage: totalCashRecovered > 0 ? Math.round((bundleRecovered / totalCashRecovered) * 100) : 0,
           color: "#F59E0B",
           link: "/app/bundles",
         },
@@ -499,7 +603,7 @@ async function computeDashboardMetrics(shop) {
           title: "Progressive Markdown",
           badgesUsed: markdownRulesCount,
           cashRecovered: markdownRecovered,
-          percentage: Math.round((markdownRecovered / Math.max(1, totalCashRecovered)) * 100),
+          percentage: totalCashRecovered > 0 ? Math.round((markdownRecovered / totalCashRecovered) * 100) : 0,
           color: "#8B5CF6",
           link: "/app/dead-stock",
         },
@@ -507,9 +611,9 @@ async function computeDashboardMetrics(shop) {
           key: "preorder",
           icon: "🚀",
           title: "Pre-Orders & Badges",
-          badgesUsed: launchPreOrdersCount + Math.max(urgencyStorefrontCount, smartBadgesCount),
-          cashRecovered: urgencyRecovered,
-          percentage: Math.max(0, 100 - Math.round((clearanceRecovered / Math.max(1, totalCashRecovered)) * 100) - Math.round((bundleRecovered / Math.max(1, totalCashRecovered)) * 100) - Math.round((markdownRecovered / Math.max(1, totalCashRecovered)) * 100)),
+          badgesUsed: launchPreOrdersCount + urgencyStorefrontCount + smartBadgesCount,
+          cashRecovered: preOrderRecovered,
+          percentage: totalCashRecovered > 0 ? Math.max(0, 100 - (Math.round((clearanceRecovered / totalCashRecovered) * 100) + Math.round((bundleRecovered / totalCashRecovered) * 100) + Math.round((markdownRecovered / totalCashRecovered) * 100))) : 0,
           color: "#0EA5E9",
           link: "/app/pre-orders",
         },

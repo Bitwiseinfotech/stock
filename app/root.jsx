@@ -12,6 +12,16 @@ export default function App() {
   return (
     <html lang="en">
       <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <link rel="preconnect" href="https://cdn.shopify.com/" />
+        <link
+          rel="stylesheet"
+          href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
+        />
+        <meta name="shopify-api-key" content={apiKey} />
+        <Meta />
+        <Links />
         <script
           dangerouslySetInnerHTML={{
             __html: `
@@ -47,7 +57,8 @@ export default function App() {
                           msg.indexOf("DOMWindow") !== -1 ||
                           msg.indexOf("startTime") !== -1 ||
                           msg.indexOf("reportAllChanges") !== -1 ||
-                          msg.indexOf("validateDOMNesting") !== -1
+                          msg.indexOf("validateDOMNesting") !== -1 ||
+                          msg.indexOf("error while hydrating") !== -1
                         ) {
                           return;
                         }
@@ -161,7 +172,8 @@ export default function App() {
                     msg.indexOf('target origin') !== -1 ||
                     msg.indexOf('startTime') !== -1 ||
                     msg.indexOf('reportAllChanges') !== -1 ||
-                    msg.indexOf('validateDOMNesting') !== -1
+                    msg.indexOf('validateDOMNesting') !== -1 ||
+                    msg.indexOf('error while hydrating') !== -1
                   ) {
                     if (e.preventDefault) e.preventDefault();
                     if (e.stopPropagation) e.stopPropagation();
@@ -198,7 +210,8 @@ export default function App() {
                         if (
                           str.indexOf('startTime') !== -1 ||
                           str.indexOf('reportAllChanges') !== -1 ||
-                          str.indexOf('postMessage') !== -1
+                          str.indexOf('postMessage') !== -1 ||
+                          str.indexOf('error while hydrating') !== -1
                         ) {
                           return true;
                         }
@@ -215,7 +228,8 @@ export default function App() {
                     if (
                       str.indexOf('startTime') !== -1 ||
                       str.indexOf('reportAllChanges') !== -1 ||
-                      str.indexOf('postMessage') !== -1
+                      str.indexOf('postMessage') !== -1 ||
+                      str.indexOf('error while hydrating') !== -1
                     ) {
                       return true;
                     }
@@ -233,16 +247,6 @@ export default function App() {
             `,
           }}
         />
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width,initial-scale=1" />
-        <link rel="preconnect" href="https://cdn.shopify.com/" />
-        <link
-          rel="stylesheet"
-          href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
-        />
-        <meta name="shopify-api-key" content={apiKey} />
-        <Meta />
-        <Links />
       </head>
       <body>
         <Outlet />

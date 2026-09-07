@@ -352,6 +352,38 @@
 (function () {
   "use strict";
 
+  try {
+    var filterDeprecation = function(origFn) {
+      if (!origFn) return origFn;
+      return function() {
+        var msg = "";
+        for (var i = 0; i < arguments.length; i++) {
+          try {
+            var it = arguments[i];
+            msg += " " + (typeof it === "object" ? (it && it.message ? it.message : JSON.stringify(it)) : String(it));
+          } catch (_) {
+            msg += " " + String(arguments[i]);
+          }
+        }
+        if (
+          msg.indexOf("deprecated parameters") !== -1 ||
+          msg.indexOf("initialization function") !== -1 ||
+          msg.indexOf("pass a single object instead") !== -1 ||
+          msg.indexOf("preloaded using link preload") !== -1
+        ) {
+          return;
+        }
+        return origFn.apply(console, arguments);
+      };
+    };
+    if (!console.__ss_silence_patched) {
+      console.__ss_silence_patched = true;
+      if (console.warn) console.warn = filterDeprecation(console.warn);
+      if (console.error) console.error = filterDeprecation(console.error);
+      if (console.info) console.info = filterDeprecation(console.info);
+    }
+  } catch (_) {}
+
   var section = document.getElementById("smart-stock-bundles-{{ block.id }}");
   if (!section) return;
 
@@ -392,20 +424,22 @@
     if (!prodIdOrHandle) return null;
     var clean = String(prodIdOrHandle).replace("gid://shopify/Product/", "").trim();
 
-    // 1. Try product handle direct endpoint
-    try {
-      var res = await fetch("/products/" + encodeURIComponent(clean) + ".js");
-      if (res.ok) {
-        var prodData = await res.json();
-        if (prodData && prodData.variants && prodData.variants.length > 0) {
-          return prodData.variants[0].id;
+    // 1. Try product handle direct endpoint (only if clean is a slug handle, not purely numeric ID)
+    if (!/^\d+$/.test(clean)) {
+      try {
+        var res = await fetch("/products/" + encodeURIComponent(clean) + ".js");
+        if (res.ok) {
+          var prodData = await res.json();
+          if (prodData && prodData.variants && prodData.variants.length > 0) {
+            return prodData.variants[0].id;
+          }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
 
     // 2. Try Smart Stock app proxy endpoint
     try {
-      var widgetRes = await fetch("/apps/smart-stock/api/storefront/product-widget?shop=" + encodeURIComponent(shop) + "&productId=" + encodeURIComponent(clean));
+      var widgetRes = await fetch("/apps/smart-stock/product-widget?shop=" + encodeURIComponent(shop) + "&productId=" + encodeURIComponent(clean));
       if (widgetRes.ok) {
         var wJson = await widgetRes.json();
         if (wJson && wJson.variantId) {
@@ -720,7 +754,6 @@
     card.innerHTML = 
       '<div class="ss-bundle-header">' +
         '<div class="ss-bundle-title-wrap">' +
-          '<span class="ss-box-icon">📦</span>' +
           '<span class="ss-main-title">' + escapeHtml(headerTitle) + '</span>' +
         '</div>' +
         badgeHtml +

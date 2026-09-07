@@ -1,12 +1,12 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "f59334bffb390a023ff96c8f3bd9ab98"
-application_url = "https://palmer-correspondence-mark-michigan.trycloudflare.com"
+application_url = "https://gray-psychiatry-knee-flashing.trycloudflare.com"
 embedded = true
 name = "smart-stock"
 
 [app_proxy]
-url = "https://palmer-correspondence-mark-michigan.trycloudflare.com/api/storefront"
+url = "https://gray-psychiatry-knee-flashing.trycloudflare.com/api/storefront"
 subpath = "smart-stock"
 prefix = "apps"
 
@@ -66,7 +66,7 @@ api_version = "unstable"
 subscription = []
 
 [auth]
-redirect_urls = [ "https://palmer-correspondence-mark-michigan.trycloudflare.com/api/auth" ]
+redirect_urls = [ "https://gray-psychiatry-knee-flashing.trycloudflare.com/api/auth" ]
 
 [build]
 automatically_update_urls_on_dev = true

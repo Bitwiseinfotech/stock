@@ -56,7 +56,8 @@ if (typeof window !== "undefined") {
             str.includes("DOMWindow") ||
             str.includes("startTime") ||
             str.includes("reportAllChanges") ||
-            str.includes("validateDOMNesting")
+            str.includes("validateDOMNesting") ||
+            str.includes("error while hydrating")
           ) {
             return;
           }
@@ -170,7 +171,8 @@ if (typeof window !== "undefined") {
         msg.indexOf('target origin') !== -1 ||
         msg.indexOf('startTime') !== -1 ||
         msg.indexOf('reportAllChanges') !== -1 ||
-        msg.indexOf('validateDOMNesting') !== -1
+        msg.indexOf('validateDOMNesting') !== -1 ||
+        msg.indexOf('error while hydrating') !== -1
       ) {
         if (e.preventDefault) e.preventDefault();
         if (e.stopPropagation) e.stopPropagation();
@@ -187,7 +189,8 @@ if (typeof window !== "undefined") {
         msg.indexOf('postMessage') !== -1 ||
         msg.indexOf('target origin') !== -1 ||
         msg.indexOf('startTime') !== -1 ||
-        msg.indexOf('reportAllChanges') !== -1
+        msg.indexOf('reportAllChanges') !== -1 ||
+        msg.indexOf('error while hydrating') !== -1
       ) {
         if (e.preventDefault) e.preventDefault();
         return true;
@@ -207,7 +210,8 @@ if (typeof window !== "undefined") {
             if (
               str.indexOf('startTime') !== -1 ||
               str.indexOf('reportAllChanges') !== -1 ||
-              str.indexOf('postMessage') !== -1
+              str.indexOf('postMessage') !== -1 ||
+              str.indexOf('error while hydrating') !== -1
             ) {
               return true;
             }
@@ -224,7 +228,8 @@ if (typeof window !== "undefined") {
         if (
           str.indexOf('startTime') !== -1 ||
           str.indexOf('reportAllChanges') !== -1 ||
-          str.indexOf('postMessage') !== -1
+          str.indexOf('postMessage') !== -1 ||
+          str.indexOf('error while hydrating') !== -1
         ) {
           return true;
         }

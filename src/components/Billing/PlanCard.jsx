@@ -135,7 +135,7 @@ export default function PlanCard({
                     as="span"
                   >
                     {!feature.included && (
-                      <span style={{ marginRight: "6px" }}>🔒</span>
+                      <span style={{ marginRight: "6px" }}></span>
                     )}
                     {feature.name}
                     {!feature.included && feature.lockedIn && (

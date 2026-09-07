@@ -1,6 +1,38 @@
 (function () {
   "use strict";
 
+  try {
+    var filterDeprecation = function(origFn) {
+      if (!origFn) return origFn;
+      return function() {
+        var msg = "";
+        for (var i = 0; i < arguments.length; i++) {
+          try {
+            var it = arguments[i];
+            msg += " " + (typeof it === "object" ? (it && it.message ? it.message : JSON.stringify(it)) : String(it));
+          } catch (_) {
+            msg += " " + String(arguments[i]);
+          }
+        }
+        if (
+          msg.indexOf("deprecated parameters") !== -1 ||
+          msg.indexOf("initialization function") !== -1 ||
+          msg.indexOf("pass a single object instead") !== -1 ||
+          msg.indexOf("preloaded using link preload") !== -1
+        ) {
+          return;
+        }
+        return origFn.apply(console, arguments);
+      };
+    };
+    if (!console.__ss_silence_patched) {
+      console.__ss_silence_patched = true;
+      if (console.warn) console.warn = filterDeprecation(console.warn);
+      if (console.error) console.error = filterDeprecation(console.error);
+      if (console.info) console.info = filterDeprecation(console.info);
+    }
+  } catch (_) {}
+
   // Prevent multiple script instances from initializing competing lifecycles
   if (window.__SmartStockStockoutShieldActive) {
     return;
@@ -390,7 +422,7 @@
         });
 
         if (!response.ok) {
-          response = await fetch(`/api/storefront/stockout-notify`, {
+          response = await fetch(`/apps/smart-stock/notify`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
             body: JSON.stringify(payload),
@@ -546,7 +578,10 @@
 
     // RULE 1: IN STOCK (Stock > 0) -> Low stock urgency badge if enabled
     if (stock > 0) {
-      return isLowStockBadgeEnabled && stock <= threshold ? "LOW_STOCK" : "HEALTHY";
+      const showBadge = data.lowStockBadge?.show !== undefined
+        ? parseBoolean(data.lowStockBadge.show)
+        : isLowStockBadgeEnabled;
+      return showBadge ? "LOW_STOCK" : "HEALTHY";
     }
 
     // RULE 2: OUT OF STOCK (Stock <= 0) -> Notify Me only (Pre-orders handled exclusively by Launch Pre-Order)
@@ -577,8 +612,12 @@
 
     syncPurchaseControls("HEALTHY");
 
-    // Only render Low Stock badge when stock > 0 and stock <= threshold
-    if (!isLowStockBadgeEnabled || stock <= 0 || stock > threshold) {
+    // Only render Low Stock badge when enabled and stock > 0
+    const showBadge = data.lowStockBadge?.show !== undefined
+      ? parseBoolean(data.lowStockBadge.show)
+      : (isLowStockBadgeEnabled && stock > 0);
+
+    if (!showBadge || stock <= 0) {
       return;
     }
 
@@ -628,9 +667,8 @@
     const productId = getProductId();
 
     const proxyUrls = [
-      `/apps/smart-stock/stockout-shield?shop=${encodeURIComponent(shop)}&variantId=${encodeURIComponent(variantId)}&productId=${encodeURIComponent(productId)}`,
-      `/apps/smart-stock/high-demand?shop=${encodeURIComponent(shop)}&variantId=${encodeURIComponent(variantId)}&productId=${encodeURIComponent(productId)}`,
-      `/api/storefront/stockout-shield?shop=${encodeURIComponent(shop)}&variantId=${encodeURIComponent(variantId)}&productId=${encodeURIComponent(productId)}`
+      `/apps/smart-stock/stockout-shield?shop=${encodeURIComponent(shop)}&variantId=${encodeURIComponent(variantId)}&productId=${encodeURIComponent(productId)}&_t=${Date.now()}`,
+      `/apps/smart-stock/high-demand?shop=${encodeURIComponent(shop)}&variantId=${encodeURIComponent(variantId)}&productId=${encodeURIComponent(productId)}&_t=${Date.now()}`,
     ];
 
     let data = null;

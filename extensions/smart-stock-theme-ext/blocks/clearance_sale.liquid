@@ -733,7 +733,8 @@
 
     if (
       config &&
-      config.enabled === false
+      config.enabled === false &&
+      (!sale || !sale.hasClearance)
     ) {
       removeRenderedClearance();
       return;
@@ -1000,7 +1001,11 @@
       })
       .then(function (data) {
         try {
-          sessionStorage.setItem(cacheKey, JSON.stringify({ data: data, time: Date.now() }));
+          if (!data || !data.progressiveMarkdown || !data.progressiveMarkdown.enabled) {
+            sessionStorage.setItem(cacheKey, JSON.stringify({ data: data, time: Date.now() }));
+          } else {
+            sessionStorage.removeItem(cacheKey);
+          }
         } catch (_) {}
 
         /*

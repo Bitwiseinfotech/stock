@@ -1,6 +1,7 @@
 const shopifyGraphQL = require("./shopifyGraphql");
 const DeadStockAction = require("../models/DeadStockAction");
 const ClearanceSale = require("../models/ClearanceSale");
+const ClearanceSaleConfig = require("../models/ClearanceSaleConfig");
 
 // ============================================================
 // SHOPIFY GRAPHQL MUTATIONS / QUERIES
@@ -328,6 +329,21 @@ async function createClearanceSale(
         isUpdate: Boolean(existingSale),
       },
     });
+
+    // Ensure ClearanceSaleConfig is enabled for this shop so the storefront widget renders
+    await ClearanceSaleConfig.findOneAndUpdate(
+      { shopId: shop },
+      { $set: { enabled: true } },
+      { upsert: true }
+    ).catch(() => {});
+
+    // Clear storefront cache immediately so storefront updates in real-time
+    try {
+      const { clearStorefrontCache } = require("../controllers/storefrontController");
+      if (typeof clearStorefrontCache === "function") {
+        clearStorefrontCache(shop);
+      }
+    } catch (_) {}
 
     return {
       success: true,

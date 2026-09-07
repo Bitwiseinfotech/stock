@@ -2,10 +2,9 @@
   "use strict";
 
   try {
-    var origWarn = console.warn;
-    if (origWarn && !console.__ss_silence_patched) {
-      console.__ss_silence_patched = true;
-      console.warn = function() {
+    var filterDeprecation = function(origFn) {
+      if (!origFn) return origFn;
+      return function() {
         var msg = "";
         for (var i = 0; i < arguments.length; i++) {
           try {
@@ -23,8 +22,14 @@
         ) {
           return;
         }
-        return origWarn.apply(console, arguments);
+        return origFn.apply(console, arguments);
       };
+    };
+    if (!console.__ss_silence_patched) {
+      console.__ss_silence_patched = true;
+      if (console.warn) console.warn = filterDeprecation(console.warn);
+      if (console.error) console.error = filterDeprecation(console.error);
+      if (console.info) console.info = filterDeprecation(console.info);
     }
   } catch (_) {}
 
@@ -58,21 +63,23 @@
     if (!prodIdOrHandle) return null;
     var clean = String(prodIdOrHandle).replace("gid://shopify/Product/", "").trim();
 
-    // 1. Try product handle direct endpoint
-    try {
-      var res = await fetch("/products/" + encodeURIComponent(clean) + ".js");
-      if (res.ok) {
-        var prodData = await res.json();
-        if (prodData && prodData.variants && prodData.variants.length > 0) {
-          return prodData.variants[0].id;
+    // 1. Try product handle direct endpoint (only if clean is a slug handle, not purely numeric ID)
+    if (!/^\d+$/.test(clean)) {
+      try {
+        var res = await fetch("/products/" + encodeURIComponent(clean) + ".js");
+        if (res.ok) {
+          var prodData = await res.json();
+          if (prodData && prodData.variants && prodData.variants.length > 0) {
+            return prodData.variants[0].id;
+          }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
 
     // 2. Try Smart Stock app proxy endpoint
     if (shop) {
       try {
-        var widgetRes = await fetch("/apps/smart-stock/api/storefront/product-widget?shop=" + encodeURIComponent(shop) + "&productId=" + encodeURIComponent(clean));
+        var widgetRes = await fetch("/apps/smart-stock/product-widget?shop=" + encodeURIComponent(shop) + "&productId=" + encodeURIComponent(clean));
         if (widgetRes.ok) {
           var wJson = await widgetRes.json();
           if (wJson && wJson.variantId) {
@@ -109,10 +116,8 @@
     if (currentVariantId) params.append("variantId", currentVariantId);
 
     var candidateUrls = [
-      "/apps/smart-stock/api/storefront/bundles?" + params.toString(),
-      "/api/storefront/bundles?" + params.toString(),
-      "/apps/smart-stock/api/storefront/product-widget?" + params.toString(),
-      "/api/storefront/product-widget?" + params.toString()
+      "/apps/smart-stock/bundles?" + params.toString(),
+      "/apps/smart-stock/product-widget?" + params.toString()
     ];
 
     var bundles = [];
@@ -375,11 +380,19 @@
     var companionImgHtml = renderProductImageHtml(bundle.companionImage, companionTitle);
     var discountPercent = bundle.discountPercent || bundle.discountPercentage || 10;
 
+    // Individual product prices
+    var deadStockItemPrice = Number(bundle.deadStockPrice || 0);
+    var companionItemPrice = Number(bundle.companionPrice || 0);
+
+    var dsOrigFormatted = deadStockItemPrice > 0 ? formatMoney(deadStockItemPrice, currency, moneyFormat) : "";
+    var compOrigFormatted = companionItemPrice > 0 ? formatMoney(companionItemPrice, currency, moneyFormat) : "";
+
     var bundleName = bundle.name || bundle.bundleName || (deadStockTitle + " + " + companionTitle + " Bundle");
 
-    var origPrice = Number(bundle.originalPrice || 0);
-    var finalPrice = Number(bundle.bundlePrice || (origPrice > 0 ? origPrice * (1 - discountPercent / 100) : 0));
-    var savings = Number(bundle.savings || Math.max(0, origPrice - finalPrice));
+    var origPrice = Number(bundle.originalPrice || (deadStockItemPrice + companionItemPrice) || 0);
+    var discountAmount = Number((origPrice * (discountPercent / 100)).toFixed(2));
+    var finalPrice = Number(bundle.bundlePrice || (origPrice > 0 ? origPrice - discountAmount : 0));
+    var savings = Number(bundle.savings || discountAmount);
 
     var formattedFinalPrice = formatMoney(finalPrice, currency, moneyFormat);
     var formattedOrigPrice = origPrice > 0 ? formatMoney(origPrice, currency, moneyFormat) : "";
@@ -400,7 +413,6 @@
     card.innerHTML = 
       '<div class="ss-bundle-header">' +
         '<div class="ss-bundle-title-wrap">' +
-          '<span class="ss-box-icon">📦</span>' +
           '<span class="ss-main-title">' + escapeHtml(headerTitle) + '</span>' +
         '</div>' +
         badgeHtml +
@@ -417,6 +429,7 @@
           '<div class="ss-item-text">' +
             '<div class="ss-item-name">' + escapeHtml(deadStockTitle) + '</div>' +
             '<div class="ss-item-sub-primary">Current item</div>' +
+            (dsOrigFormatted ? '<div style="font-size:13px;font-weight:600;color:#374151;margin-top:3px;">' + dsOrigFormatted + '</div>' : '') +
           '</div>' +
         '</div>' +
 
@@ -433,6 +446,7 @@
           '<div class="ss-item-text">' +
             '<div class="ss-item-name">' + escapeHtml(companionTitle) + '</div>' +
             '<div class="ss-item-sub-companion">Recommended companion</div>' +
+            (compOrigFormatted ? '<div style="font-size:13px;font-weight:600;color:#374151;margin-top:3px;">' + compOrigFormatted + '</div>' : '') +
           '</div>' +
         '</div>' +
       '</div>' +

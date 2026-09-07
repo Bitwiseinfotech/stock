@@ -16,60 +16,114 @@ import { useNavigate } from "react-router";
 import { fetchDashboardData } from "../../services/appApi";
 
 const getInitialTrends = () => {
-  const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const dailyTrend = daysOfWeek.map((dayName) => ({
+    label: dayName,
+    fullDate: dayName,
+    dayName,
+    recovered: 0,
+    count: 0,
+  }));
 
-  const dailyTrend = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const dayName = daysOfWeek[d.getDay()];
-    const dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    dailyTrend.push({
-      label: i === 0 ? "Today" : dayName,
-      fullDate: dateStr,
-      dayName,
-      recovered: Math.round(2800 + (6 - i) * 650 + (d.getDay() % 3) * 450),
-      count: Math.round(28 + (6 - i) * 7 + (d.getDay() % 3) * 5),
-    });
-  }
+  const weeklyTrend = [1, 2, 3, 4, 5, 6].map((wk) => ({
+    label: `Wk ${wk}`,
+    dateRange: `Week ${wk}`,
+    recovered: 0,
+    count: 0,
+  }));
 
-  const weeklyTrend = [];
-  for (let i = 5; i >= 0; i--) {
-    const dEnd = new Date();
-    dEnd.setDate(dEnd.getDate() - i * 7);
-    const dStart = new Date(dEnd);
-    dStart.setDate(dStart.getDate() - 6);
-    const dStartStr = dStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    const dEndStr = dEnd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    weeklyTrend.push({
-      label: i === 0 ? "This Wk" : `Wk ${6 - i}`,
-      dateRange: `${dStartStr} - ${dEndStr}`,
-      recovered: Math.round(16800 + (5 - i) * 3800),
-      count: Math.round(180 + (5 - i) * 40),
-    });
-  }
-
-  const monthlyTrend = [];
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(1);
-    d.setMonth(d.getMonth() - i);
-    const monthName = monthNames[d.getMonth()];
-    const monthYear = d.getFullYear();
-    monthlyTrend.push({
-      label: monthName,
-      month: monthName,
-      year: monthYear,
-      recovered: Math.round(32000 + (5 - i) * 9800),
-      count: Math.round(240 + (5 - i) * 85),
-    });
-  }
+  const monthlyTrend = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"].map((m) => ({
+    label: m,
+    month: m,
+    year: 2026,
+    recovered: 0,
+    count: 0,
+  }));
 
   return { dailyTrend, weeklyTrend, monthlyTrend };
 };
 
-const DASHBOARD_CACHE_KEY = "smart_stock_dashboard_cached_data_v1";
+const DEFAULT_DASHBOARD_DATA = {
+  totalCashRecovered: 0,
+  growthPercentage: 0,
+  deadStockCashTiedUp: 0,
+  deadStockSkuCount: 0,
+  revenueAtRisk: 0,
+  highDemandRiskCount: 0,
+  totalActiveAutomations: 0,
+  dailyTrend: getInitialTrends().dailyTrend,
+  weeklyTrend: getInitialTrends().weeklyTrend,
+  monthlyTrend: getInitialTrends().monthlyTrend,
+  stockHealth: {
+    healthyPercent: 70,
+    slowMovingPercent: 20,
+    deadStockPercent: 10,
+    healthyCount: 35,
+    slowMovingCount: 9,
+    deadStockCount: 6,
+  },
+  activityFeed: [],
+  badgeBreakdown: [
+    {
+      key: "clearance",
+      title: "Clearance Sales",
+      badgesUsed: 0,
+      cashRecovered: 0,
+      percentage: 0,
+      color: "#10B981",
+      link: "/app/dead-stock",
+    },
+    {
+      key: "bundle",
+      title: "Bundle Offers",
+      badgesUsed: 0,
+      cashRecovered: 0,
+      percentage: 0,
+      color: "#F59E0B",
+      link: "/app/bundles",
+    },
+    {
+      key: "markdown",
+      title: "Progressive Markdown",
+      badgesUsed: 0,
+      cashRecovered: 0,
+      percentage: 0,
+      color: "#8B5CF6",
+      link: "/app/dead-stock",
+    },
+    {
+      key: "preorder",
+      title: "Pre-Orders & Badges",
+      badgesUsed: 0,
+      cashRecovered: 0,
+      percentage: 0,
+      color: "#0EA5E9",
+      link: "/app/pre-orders",
+    },
+  ],
+  recommendations: [
+    {
+      id: "rec-1",
+      title: "Clear slow-moving products",
+      description: "Items with zero or slow sales. Launch a clearance discount or markdown to recover tied-up capital.",
+      actionText: "Create Clearance Sale",
+      tag: "Dead stock",
+      tone: "attention",
+      link: "/app/dead-stock",
+    },
+    {
+      id: "rec-2",
+      title: "Protect revenue on high-demand products",
+      description: "High velocity items risk stocking out. Enable pre-orders or low-stock urgency badges to secure orders.",
+      actionText: "View High Demand",
+      tag: "High velocity",
+      tone: "info",
+      link: "/app/high-demand",
+    },
+  ],
+};
+
+const DASHBOARD_CACHE_KEY = "smart_stock_dashboard_cached_data_v2";
 
 function getLocalCache(shop) {
   if (typeof window === "undefined") return null;
@@ -112,97 +166,11 @@ export default function Dashboard({ shopDomain = "" }) {
     navigate(target);
   };
 
-  const initialTrends = getInitialTrends();
-  const cachedData = getLocalCache(effectiveShop);
-
-  const [loading, setLoading] = useState(!cachedData);
+  const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [hoveredIdx, setHoveredIdx] = useState(null);
   const [timeframe, setTimeframe] = useState("monthly"); // "daily" | "weekly" | "monthly"
-  const [data, setData] = useState(() => {
-    if (cachedData) {
-      return cachedData;
-    }
-    return {
-      totalCashRecovered: 0,
-      growthPercentage: 0,
-      deadStockCashTiedUp: 0,
-      deadStockSkuCount: 0,
-      revenueAtRisk: 0,
-      highDemandRiskCount: 0,
-      totalActiveAutomations: 0,
-      dailyTrend: initialTrends.dailyTrend,
-      weeklyTrend: initialTrends.weeklyTrend,
-      monthlyTrend: initialTrends.monthlyTrend,
-      stockHealth: {
-        healthyPercent: 70,
-        slowMovingPercent: 20,
-        deadStockPercent: 10,
-        healthyCount: 35,
-        slowMovingCount: 9,
-        deadStockCount: 6,
-      },
-      activityFeed: [],
-      badgeBreakdown: [
-        {
-          key: "clearance",
-          title: "Clearance Sales",
-          badgesUsed: 0,
-          cashRecovered: 0,
-          percentage: 0,
-          color: "#10B981",
-          link: "/app/dead-stock",
-        },
-        {
-          key: "bundle",
-          title: "Bundle Offers",
-          badgesUsed: 0,
-          cashRecovered: 0,
-          percentage: 0,
-          color: "#F59E0B",
-          link: "/app/bundles",
-        },
-        {
-          key: "markdown",
-          title: "Progressive Markdown",
-          badgesUsed: 0,
-          cashRecovered: 0,
-          percentage: 0,
-          color: "#8B5CF6",
-          link: "/app/dead-stock",
-        },
-        {
-          key: "preorder",
-          title: "Pre-Orders & Badges",
-          badgesUsed: 0,
-          cashRecovered: 0,
-          percentage: 0,
-          color: "#0EA5E9",
-          link: "/app/pre-orders",
-        },
-      ],
-      recommendations: [
-        {
-          id: "rec-1",
-          title: "Clear slow-moving products",
-          description: "Items with zero or slow sales. Launch a clearance discount or markdown to recover tied-up capital.",
-          actionText: "Create Clearance Sale",
-          tag: "Dead stock",
-          tone: "attention",
-          link: "/app/dead-stock",
-        },
-        {
-          id: "rec-2",
-          title: "Protect revenue on high-demand products",
-          description: "High velocity items risk stocking out. Enable pre-orders or low-stock urgency badges to secure orders.",
-          actionText: "View High Demand",
-          tag: "High velocity",
-          tone: "info",
-          link: "/app/high-demand",
-        },
-      ],
-    };
-  });
+  const [data, setData] = useState(DEFAULT_DASHBOARD_DATA);
 
   const loadData = useCallback(async (isForced = false) => {
     try {
@@ -252,8 +220,13 @@ export default function Dashboard({ shopDomain = "" }) {
   }, [effectiveShop]);
 
   useEffect(() => {
+    const cached = getLocalCache(effectiveShop);
+    if (cached) {
+      setData(cached);
+      setLoading(false);
+    }
     loadData(false);
-  }, [loadData]);
+  }, [effectiveShop, loadData]);
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat("en-US", {

@@ -62,10 +62,17 @@ async function getProductWidgetData(req, res) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
 
+    const skipCache = req.query.nocache === "1" || req.query._t || req.query.fresh === "1";
     const cacheKey = `widget_${shopId}_${productId || ""}_${variantId || ""}`;
-    const cachedData = getStorefrontCache(cacheKey);
+    const cachedData = !skipCache ? getStorefrontCache(cacheKey) : null;
     if (cachedData) {
-      res.set("Cache-Control", "public, max-age=15, stale-while-revalidate=60");
+      if (cachedData.progressiveMarkdown?.enabled) {
+        res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.set("Pragma", "no-cache");
+        res.set("Expires", "0");
+      } else {
+        res.set("Cache-Control", "public, max-age=15, stale-while-revalidate=60");
+      }
       return res.status(200).json(cachedData);
     }
 
@@ -259,60 +266,64 @@ async function getProductWidgetData(req, res) {
       let companionVarId = activeBundle.companionVariantId || meta.companionVariantId;
       let origPrice = Number(meta.originalPrice || 0);
 
-      const needsResolution =
-        isPlaceholderText(deadStockTitle) ||
-        isPlaceholderText(companionTitle) ||
-        !deadStockImage ||
-        !companionImage ||
-        !deadStockVarId ||
-        !companionVarId ||
-        !origPrice;
+      let deadStockPriceVal = Number(meta.deadStockPrice || 0);
+      let companionPriceVal = Number(meta.companionPrice || 0);
 
-      if (needsResolution) {
+      try {
         const [dsInfo, compInfo] = await Promise.all([
           resolveProductDetails(shopId, accessToken, deadStockVarId || activeBundle.deadStockProductId, "ProductVariant"),
           resolveProductDetails(shopId, accessToken, companionVarId || activeBundle.companionProductId, "Product"),
         ]);
 
-        if (isPlaceholderText(deadStockTitle)) deadStockTitle = dsInfo.title || dsInfo.variantTitle || "Product unavailable";
-        if (isPlaceholderText(companionTitle)) companionTitle = compInfo.title || compInfo.variantTitle || "Product unavailable";
-        if (!deadStockImage) deadStockImage = dsInfo.image || "";
-        if (!companionImage) companionImage = compInfo.image || "";
-        if (!deadStockVarId) deadStockVarId = dsInfo.variantId;
-        if (!companionVarId) companionVarId = compInfo.variantId;
+        if (isPlaceholderText(deadStockTitle)) deadStockTitle = dsInfo?.title || dsInfo?.variantTitle || "Product unavailable";
+        if (isPlaceholderText(companionTitle)) companionTitle = compInfo?.title || compInfo?.variantTitle || "Product unavailable";
+        if (!deadStockImage) deadStockImage = dsInfo?.image || "";
+        if (!companionImage) companionImage = compInfo?.image || "";
+        if (!deadStockVarId && dsInfo?.variantId) deadStockVarId = dsInfo.variantId;
+        if (!companionVarId && compInfo?.variantId) companionVarId = compInfo.variantId;
 
-        if (!origPrice) {
-          const p1 = Number(dsInfo.price || 0);
-          const p2 = Number(compInfo.price || 0);
-          origPrice = Number((p1 + p2).toFixed(2));
+        // Authoritative live Shopify variant prices
+        const p1 = Number(dsInfo?.price != null && dsInfo.price > 0 ? dsInfo.price : deadStockPriceVal);
+        const p2 = Number(compInfo?.price != null && compInfo.price > 0 ? compInfo.price : companionPriceVal);
+        deadStockPriceVal = p1;
+        companionPriceVal = p2;
+        origPrice = Number((p1 + p2).toFixed(2));
+
+        // Update database asynchronously if values changed
+        if (meta.deadStockPrice !== deadStockPriceVal || meta.companionPrice !== companionPriceVal || meta.originalPrice !== origPrice) {
+          Bundle.updateOne(
+            { _id: activeBundle._id },
+            {
+              $set: {
+                "metadata.deadStockTitle": deadStockTitle,
+                "metadata.companionTitle": companionTitle,
+                "metadata.deadStockImage": deadStockImage,
+                "metadata.companionImage": companionImage,
+                "metadata.deadStockVariantId": deadStockVarId,
+                "metadata.companionVariantId": companionVarId,
+                "metadata.originalPrice": origPrice,
+                "metadata.deadStockPrice": deadStockPriceVal,
+                "metadata.companionPrice": companionPriceVal,
+                companionVariantId: companionVarId || activeBundle.companionVariantId,
+              },
+            }
+          ).catch(() => { });
         }
-
-        // Update database asynchronously
-        Bundle.updateOne(
-          { _id: activeBundle._id },
-          {
-            $set: {
-              "metadata.deadStockTitle": deadStockTitle,
-              "metadata.companionTitle": companionTitle,
-              "metadata.deadStockImage": deadStockImage,
-              "metadata.companionImage": companionImage,
-              "metadata.deadStockVariantId": deadStockVarId,
-              "metadata.companionVariantId": companionVarId,
-              "metadata.originalPrice": origPrice,
-              companionVariantId: companionVarId || activeBundle.companionVariantId,
-            },
-          }
-        ).catch(() => { });
+      } catch (resErr) {
+        console.warn("[StorefrontController] Live price resolution warning:", resErr.message);
       }
 
       const discountPercent = Number(activeBundle.discountPercent || 0);
       const isBOGO =
         String(activeBundle.offerType || "").trim().toUpperCase() === "BOGO" ||
         String(activeBundle.metadata?.offerType || "").trim().toUpperCase() === "BOGO";
+
+      // Dynamic calculation: combined price minus bundle discount
+      const discountAmount = Number((origPrice * (discountPercent / 100)).toFixed(2));
       const bPrice = isBOGO
-        ? (meta.bundlePrice || meta.deadStockPrice || (origPrice > 0 ? Number((origPrice * 0.5).toFixed(2)) : 0))
-        : (origPrice > 0 ? Number((origPrice * (1 - discountPercent / 100)).toFixed(2)) : 0);
-      const bSavings = Math.max(0, origPrice - bPrice);
+        ? deadStockPriceVal
+        : Number(Math.max(0, origPrice - discountAmount).toFixed(2));
+      const bSavings = isBOGO ? companionPriceVal : discountAmount;
 
       if (isBOGO && !activeBundle.shopifyDiscountId && !meta.shopifyDiscountId) {
         ensureBOGODiscount(shopId, accessToken, activeBundle).catch(() => { });
@@ -338,9 +349,10 @@ async function getProductWidgetData(req, res) {
         companionVariantId: companionVarId || "",
         freeProductId: isBOGO ? (activeBundle.freeProductId || meta.freeProductId || "") : "",
         freeProductVariantId: isBOGO ? (activeBundle.freeProductVariantId || meta.freeProductVariantId || "") : "",
-        shopifyDiscountId: isBOGO ? (activeBundle.shopifyDiscountId || meta.shopifyDiscountId || "") : "",
-        deadStockPrice: meta.deadStockPrice || 0,
-        companionPrice: meta.companionPrice || 0,
+        // Pass shopifyDiscountId for ALL bundle types (not just BOGO) so checkout auto-discount applies
+        shopifyDiscountId: activeBundle.shopifyDiscountId || meta.shopifyDiscountId || "",
+        deadStockPrice: deadStockPriceVal || meta.deadStockPrice || 0,
+        companionPrice: companionPriceVal || meta.companionPrice || 0,
         originalPrice: origPrice > 0 ? origPrice : 0,
         bundlePrice: bPrice > 0 ? bPrice : 0,
         savings: bSavings > 0 ? bSavings : 0,
@@ -404,10 +416,19 @@ async function getProductWidgetData(req, res) {
     const isSmartLowStock = assignedBadgeType === "LOW_STOCK" || (smartApp?.enabled && smartApp?.badgeType === "LOW_STOCK");
     const isSmartPreOrder = assignedBadgeType === "PRE_ORDER" || (smartApp?.enabled && smartApp?.badgeType === "PRE_ORDER") || Boolean(activeLaunchPreOrder);
 
-    const isUrgencyActive = isSmartLowStock || parseBoolean(
+    const isExplicitlyEnabledOnProduct = parseBoolean(
       storefrontSetting?.lowStockBadge?.enabled ??
       storefrontSetting?.urgencyBadgeEnabled ??
+      item?.lowStockBadge?.enabled ??
+      item?.urgencyBadgeEnabled ??
       false
+    );
+
+    const isUrgencyActive = isSmartLowStock || isExplicitlyEnabledOnProduct;
+    const isUrgencyShowing = isUrgencyActive && stock > 0 && (
+      isExplicitlyEnabledOnProduct ||
+      isSmartLowStock ||
+      isLowStock
     );
 
     const isPreOrderActive = isSmartPreOrder || parseBoolean(
@@ -422,7 +443,6 @@ async function getProductWidgetData(req, res) {
       false
     );
 
-    const isUrgencyShowing = isUrgencyActive && isLowStock;
     const isNotifyMeShowing = isNotifyMeActive && isOutOfStock;
     const isShieldShowing = isUrgencyShowing || isNotifyMeShowing;
 
@@ -442,6 +462,9 @@ async function getProductWidgetData(req, res) {
 
     // A Clearance Sale offer MUST only show if a real active/scheduled ClearanceSale record exists in DB
     const hasClearanceOffer = Boolean(clearanceSale);
+    if (hasClearanceOffer) {
+      clearanceConfig.enabled = true;
+    }
     const origPriceNum = Number(originalPrice) || 0;
     const finalDiscountVal = hasClearanceOffer ? Number(clearanceSale?.discountValue ?? clearanceSale?.discountPercent ?? 0) : 0;
     const calcSalePrice = hasClearanceOffer && origPriceNum > 0
@@ -473,8 +496,9 @@ async function getProductWidgetData(req, res) {
       widget: stockoutShield,
       smartBadge: smartApp?.badgeType || (activeLaunchPreOrder ? "PRE_ORDER" : null),
       urgencyBadge: {
-        enabled: isUrgencyShowing || (isSmartLowStock && stock > 0),
-        text: stock > 0 ? `🔥 Only ${stock} left in stock!` : "",
+        enabled: Boolean(isUrgencyShowing || (isSmartLowStock && stock > 0)),
+        show: Boolean(isUrgencyShowing || (isSmartLowStock && stock > 0)),
+        text: stock > 0 ? (storefrontSetting?.badgeText || `🔥 Only ${stock} left in stock!`).replace(/\{stock\}/gi, String(stock)) : "",
       },
       preOrder: {
         enabled: Boolean(isPreOrderActive),
@@ -492,14 +516,21 @@ async function getProductWidgetData(req, res) {
         show: isNotifyMeShowing,
         buttonText: "🔔 Notify Me",
       },
-      markdownConfig: userMarkdownConfig || {
-        enabled: true,
-        badgeText: "{discount}% OFF",
-        badgeBackgroundColor: "#df2626",
-        badgeTextColor: "#FFFFFF",
-        borderRadius: 4,
-        showStrikethroughPrice: true,
-      },
+      markdownConfig: (() => {
+        const mc = userMarkdownConfig || {
+          enabled: true,
+          badgeText: "{discount}% OFF",
+          badgeBackgroundColor: "#df2626",
+          badgeTextColor: "#FFFFFF",
+          borderRadius: 4,
+          showStrikethroughPrice: true,
+        };
+        // Sanitize any stray leading % in the badge template (e.g. "% {discount}% OFF" → "{discount}% OFF")
+        if (mc.badgeText && typeof mc.badgeText === "string") {
+          mc.badgeText = mc.badgeText.replace(/^%\s*/, "").trim();
+        }
+        return mc;
+      })(),
       progressiveMarkdown: activeMarkdownData,
       deadStockOffer: {
         hasClearance: Boolean(hasClearanceOffer),
@@ -519,7 +550,9 @@ async function getProductWidgetData(req, res) {
       },
     };
 
-    setStorefrontCache(cacheKey, responsePayload);
+    if (!activeMarkdownData || !activeMarkdownData.enabled) {
+      setStorefrontCache(cacheKey, responsePayload);
+    }
     res.set("Cache-Control", "no-cache, no-store, must-revalidate");
     res.set("Pragma", "no-cache");
     res.set("Expires", "0");
@@ -651,50 +684,51 @@ async function getStorefrontBundles(req, res) {
         let finalCompanionVariantId = b.companionVariantId || meta.companionVariantId || "";
         let originalPrice = Number(meta.originalPrice || 0);
 
-        const needsResolution =
-          isPlaceholderText(deadStockTitle) ||
-          isPlaceholderText(companionTitle) ||
-          !deadStockImage ||
-          !companionImage ||
-          !finalDeadStockVariantId ||
-          !finalCompanionVariantId ||
-          !originalPrice;
+        let deadStockPriceVal = Number(meta.deadStockPrice || 0);
+        let companionPriceVal = Number(meta.companionPrice || 0);
 
-        if (needsResolution) {
+        try {
           const [dsInfo, compInfo] = await Promise.all([
             resolveProductDetails(shop, accessToken, finalDeadStockVariantId || b.deadStockProductId, "ProductVariant"),
             resolveProductDetails(shop, accessToken, finalCompanionVariantId || b.companionProductId, "Product"),
           ]);
 
-          if (isPlaceholderText(deadStockTitle)) deadStockTitle = dsInfo.title || dsInfo.variantTitle || "Product unavailable";
-          if (isPlaceholderText(companionTitle)) companionTitle = compInfo.title || compInfo.variantTitle || "Product unavailable";
-          if (!deadStockImage) deadStockImage = dsInfo.image || "";
-          if (!companionImage) companionImage = compInfo.image || "";
-          if (!finalDeadStockVariantId) finalDeadStockVariantId = dsInfo.variantId;
-          if (!finalCompanionVariantId) finalCompanionVariantId = compInfo.variantId;
+          if (isPlaceholderText(deadStockTitle)) deadStockTitle = dsInfo?.title || dsInfo?.variantTitle || "Product unavailable";
+          if (isPlaceholderText(companionTitle)) companionTitle = compInfo?.title || compInfo?.variantTitle || "Product unavailable";
+          if (!deadStockImage) deadStockImage = dsInfo?.image || "";
+          if (!companionImage) companionImage = compInfo?.image || "";
+          if (!finalDeadStockVariantId && dsInfo?.variantId) finalDeadStockVariantId = dsInfo.variantId;
+          if (!finalCompanionVariantId && compInfo?.variantId) finalCompanionVariantId = compInfo.variantId;
 
-          if (!originalPrice) {
-            const p1 = Number(dsInfo.price || 0);
-            const p2 = Number(compInfo.price || 0);
-            originalPrice = Number((p1 + p2).toFixed(2));
+          // Authoritative live Shopify variant prices
+          const p1 = Number(dsInfo?.price != null && dsInfo.price > 0 ? dsInfo.price : deadStockPriceVal);
+          const p2 = Number(compInfo?.price != null && compInfo.price > 0 ? compInfo.price : companionPriceVal);
+          deadStockPriceVal = p1;
+          companionPriceVal = p2;
+          originalPrice = Number((p1 + p2).toFixed(2));
+
+          // Update database asynchronously if changed
+          if (meta.deadStockPrice !== deadStockPriceVal || meta.companionPrice !== companionPriceVal || meta.originalPrice !== originalPrice) {
+            Bundle.updateOne(
+              { _id: b._id },
+              {
+                $set: {
+                  "metadata.deadStockTitle": deadStockTitle,
+                  "metadata.companionTitle": companionTitle,
+                  "metadata.deadStockImage": deadStockImage,
+                  "metadata.companionImage": companionImage,
+                  "metadata.deadStockVariantId": finalDeadStockVariantId,
+                  "metadata.companionVariantId": finalCompanionVariantId,
+                  "metadata.originalPrice": originalPrice,
+                  "metadata.deadStockPrice": deadStockPriceVal,
+                  "metadata.companionPrice": companionPriceVal,
+                  companionVariantId: finalCompanionVariantId || b.companionVariantId,
+                },
+              }
+            ).catch(() => { });
           }
-
-          // Update database asynchronously
-          Bundle.updateOne(
-            { _id: b._id },
-            {
-              $set: {
-                "metadata.deadStockTitle": deadStockTitle,
-                "metadata.companionTitle": companionTitle,
-                "metadata.deadStockImage": deadStockImage,
-                "metadata.companionImage": companionImage,
-                "metadata.deadStockVariantId": finalDeadStockVariantId,
-                "metadata.companionVariantId": finalCompanionVariantId,
-                "metadata.originalPrice": originalPrice,
-                companionVariantId: finalCompanionVariantId || b.companionVariantId,
-              },
-            }
-          ).catch(() => { });
+        } catch (resErr) {
+          console.warn("[StorefrontController] Bundles live price resolution warning:", resErr.message);
         }
 
         const discountPercent = Number(b.discountPercent || 0);
@@ -702,10 +736,12 @@ async function getStorefrontBundles(req, res) {
           String(b.offerType || "").trim().toUpperCase() === "BOGO" ||
           String(meta.offerType || "").trim().toUpperCase() === "BOGO";
 
+        // Dynamic calculation: combined price minus bundle discount
+        const discountAmount = Number((originalPrice * (discountPercent / 100)).toFixed(2));
         const bundlePrice = isBOGO
-          ? Number((meta.bundlePrice || meta.deadStockPrice || (originalPrice > 0 ? (originalPrice * 0.5).toFixed(2) : 0)))
-          : Number(meta.bundlePrice || (originalPrice > 0 ? (originalPrice * (1 - discountPercent / 100)).toFixed(2) : 0));
-        const savings = Math.max(0, originalPrice - bundlePrice);
+          ? deadStockPriceVal
+          : Number(Math.max(0, originalPrice - discountAmount).toFixed(2));
+        const savings = isBOGO ? companionPriceVal : discountAmount;
 
         if (isBOGO && !b.shopifyDiscountId && !meta.shopifyDiscountId) {
           ensureBOGODiscount(shop, accessToken, b).catch(() => { });
@@ -727,7 +763,7 @@ async function getStorefrontBundles(req, res) {
           shopifyProductId: b.shopifyProductId || "",
           shopifyVariantId: b.shopifyVariantId || "",
           shopifyBundleId: b.shopifyBundleId || b.shopifyProductId || "",
-          shopifyDiscountId: isBOGO ? (b.shopifyDiscountId || meta.shopifyDiscountId || "") : "",
+          shopifyDiscountId: b.shopifyDiscountId || meta.shopifyDiscountId || "",
           type: isBOGO ? "Bundle (BOGO)" : "Dead Stock Bundle",
           deadStockTitle: deadStockTitle || "Product unavailable",
           companionTitle: companionTitle || "Product unavailable",
@@ -735,8 +771,8 @@ async function getStorefrontBundles(req, res) {
           deadStockImage: deadStockImage || "",
           companionImage: companionImage || "",
           freeProductImage: isBOGO ? (meta.freeProductImage || companionImage || "") : "",
-          deadStockPrice: meta.deadStockPrice || 0,
-          companionPrice: meta.companionPrice || 0,
+          deadStockPrice: deadStockPriceVal || meta.deadStockPrice || 0,
+          companionPrice: companionPriceVal || meta.companionPrice || 0,
           originalPrice: originalPrice > 0 ? originalPrice.toFixed(2) : null,
           bundlePrice: bundlePrice > 0 ? bundlePrice.toFixed(2) : null,
           savings: savings > 0 ? savings.toFixed(2) : null,
@@ -774,6 +810,9 @@ async function getProgressiveMarkdownStorefront(req, res) {
   try {
     await ensureConnected();
 
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Shopify-Shop-Domain, x-shop-domain");
     res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.set("Pragma", "no-cache");
     res.set("Expires", "0");

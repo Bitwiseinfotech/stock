@@ -47,6 +47,8 @@
   var currentVariantId = "";
   var currentCurrency = "USD";
   var currentMoneyFormat = "${{amount}}";
+  // Clearance sale price in cents (0 = no active clearance)
+  var clearanceSalePriceCents = 0;
 
   function formatDateLocale(dateStr) {
     if (!dateStr) return "";
@@ -61,6 +63,14 @@
     } catch (_) {
       return dateStr;
     }
+  }
+
+  function stripEmoji(str) {
+    if (!str) return "";
+    return String(str)
+      .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F2FF}\u{FE00}-\u{FE0F}\u{200D}\u{2700}-\u{27BF}]/gu, "")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
   function getProductJsonFromPage() {
@@ -165,6 +175,11 @@
   }
 
   function getVariantPriceCents(variantId) {
+    // 0. If a clearance sale is active, use the discounted sale price as base
+    if (clearanceSalePriceCents > 0) {
+      return clearanceSalePriceCents;
+    }
+
     // 1. Source of Truth: Shopify Variant Data from product JSON
     if (currentProductData && currentProductData.variants && currentProductData.variants.length > 0) {
       var found = currentProductData.variants.find(function (v) {
@@ -198,6 +213,34 @@
       }
     }
 
+    return 0;
+  }
+
+  // Fetch clearance sale price from product-widget API
+  async function fetchClearanceSalePrice(shop, productId, variantId) {
+    if (!shop || !productId) return 0;
+    try {
+      var params = new URLSearchParams();
+      params.set("shop", shop);
+      params.set("productId", String(productId));
+      if (variantId) params.set("variantId", String(variantId));
+      var res = await fetch("/apps/smart-stock/product-widget?" + params.toString(), {
+        credentials: "same-origin",
+        headers: { "Accept": "application/json" }
+      });
+      if (!res.ok) return 0;
+      var data = await res.json();
+      if (
+        data &&
+        data.deadStockOffer &&
+        data.deadStockOffer.hasClearance &&
+        data.deadStockOffer.salePrice !== null &&
+        data.deadStockOffer.salePrice !== undefined
+      ) {
+        // salePrice from API is in dollars (e.g. 37772.10), convert to cents
+        return Math.round(Number(data.deadStockOffer.salePrice) * 100);
+      }
+    } catch (_) {}
     return 0;
   }
 
@@ -236,8 +279,6 @@
     var endpoints = [
       "/apps/smart-stock/launch-pre-order?" + queryParams,
       "/apps/smart-stock/pre-order?" + queryParams,
-      "/api/storefront/launch-pre-order?" + queryParams,
-      "/api/storefront/pre-order?" + queryParams,
     ];
 
     for (var i = 0; i < endpoints.length; i++) {
@@ -253,7 +294,7 @@
           var contentType = res.headers.get("content-type") || "";
           if (contentType && contentType.indexOf("json") === -1) continue;
           var data = await res.json();
-          if (data && data.enabled === true) {
+          if (data && typeof data === "object") {
             return data;
           }
         }
@@ -331,17 +372,14 @@
     }
 
     var now = new Date();
-    var launchDate = config.launchDate ? new Date(config.launchDate) : null;
-    var shippingDate = config.shippingDate ? new Date(config.shippingDate) : null;
     var opensAt = config.preOrderOpensAt ? new Date(config.preOrderOpensAt) : null;
-
-    var cutoffDate = launchDate;
-    if (shippingDate && !isNaN(shippingDate.getTime()) && shippingDate > cutoffDate) {
-      cutoffDate = shippingDate;
-    }
+    var cutoffDate = config.preOrderCutoffDate
+      ? new Date(config.preOrderCutoffDate)
+      : config.launchDate
+      ? new Date(config.launchDate)
+      : null;
 
     if (cutoffDate && !isNaN(cutoffDate.getTime())) {
-      cutoffDate.setHours(23, 59, 59, 999);
       if (cutoffDate.getUTCHours() === 0 && cutoffDate.getUTCMinutes() === 0) {
         cutoffDate.setUTCHours(23, 59, 59, 999);
       }
@@ -358,13 +396,13 @@
       return;
     }
 
-    var badgeText = config.badgeText || "🛒 PRE-ORDER";
-    var launchLabel = config.launchLabel || "NEW LAUNCH";
-    var launchTitle = config.launchTitle || "New Product Launch";
-    var buttonText = config.buttonText || "PRE-ORDER NOW";
+    var badgeText = stripEmoji(config.badgeText || "PRE-ORDER");
+    var launchLabel = stripEmoji(config.launchLabel || "NEW LAUNCH");
+    var launchTitle = stripEmoji(config.launchTitle || "New Product Launch");
+    var buttonText = stripEmoji(config.buttonText || "PRE-ORDER NOW");
     var formattedLaunchDate = formatDateLocale(config.launchDate);
     var formattedShippingDate = formatDateLocale(config.shippingDate);
-    var customerMessage = config.customerMessage || "Be the first to get the new product.";
+    var customerMessage = stripEmoji(config.customerMessage || "Be the first to get the new product.");
     var launchDetails = config.launchDetails || "";
 
     var depositPct =
@@ -439,7 +477,7 @@
     var cardHeaderHtml =
       '<div class="smart-stock-launch-card__header">' +
       '<div class="smart-stock-launch-card__title-group">' +
-      '<span class="smart-stock-launch-card__title"' + titleStyle + '>🚀 ' + escapeHtml(launchTitle) + "</span>" +
+      '<span class="smart-stock-launch-card__title"' + titleStyle + '>' + escapeHtml(launchTitle) + "</span>" +
       "</div>" +
       badgesHtml +
       "</div>";
@@ -451,7 +489,7 @@
     if (formattedLaunchDate) {
       dateBoxesHtml +=
         '<div class="smart-stock-launch-card__date-box"' + dateBoxStyle + '>' +
-        '<span class="smart-stock-launch-card__date-label">📅 Launch Date</span>' +
+        '<span class="smart-stock-launch-card__date-label">Launch Date</span>' +
         '<span class="smart-stock-launch-card__date-value"' + dateValStyle + '>' + escapeHtml(formattedLaunchDate) + "</span>" +
         "</div>";
     }
@@ -459,7 +497,7 @@
     if (formattedShippingDate) {
       dateBoxesHtml +=
         '<div class="smart-stock-launch-card__date-box"' + dateBoxStyle + '>' +
-        '<span class="smart-stock-launch-card__date-label">📦 Shipping Starts</span>' +
+        '<span class="smart-stock-launch-card__date-label">Shipping Starts</span>' +
         '<span class="smart-stock-launch-card__date-value"' + dateValStyle + '>' + escapeHtml(formattedShippingDate) + "</span>" +
         "</div>";
     }
@@ -473,7 +511,7 @@
     var msgStyle = ' style="border-left:3px solid ' + accentCol + ' !important; background:#ffffff !important; color:' + textCol + ' !important; border-radius:4px !important;"';
     var messageHtml = "";
     if (customerMessage) {
-      messageHtml = '<div class="smart-stock-launch-card__message"' + msgStyle + '>✨ ' + escapeHtml(customerMessage) + "</div>";
+      messageHtml = '<div class="smart-stock-launch-card__message"' + msgStyle + '>' + escapeHtml(customerMessage) + "</div>";
     }
 
     // Details note if any
@@ -491,8 +529,8 @@
     var payNowLabel = depositPct > 0 ? 'Pay Now (' + depositPct + '%)' : 'Pay Now (Deposit)';
     var remainingLabel = depositPct > 0 ? 'Remaining Balance (' + (100 - depositPct) + '%)' : 'Remaining Balance';
     var helperText = depositPct > 0
-      ? '💡 Pay ' + depositPct + '% now to secure your pre-order. Remaining ' + (100 - depositPct) + '% will be due before shipping.'
-      : '💡 Pay ' + formatMoney(depositCents) + ' now to secure your pre-order. Remaining balance will be due before shipping.';
+      ? 'Pay ' + depositPct + '% now to secure your pre-order. Remaining ' + (100 - depositPct) + '% will be due before shipping.'
+      : 'Pay ' + formatMoney(depositCents) + ' now to secure your pre-order. Remaining balance will be due before shipping.';
 
     var paymentSectionHtml =
       '<div class="smart-stock-payment-section" style="background:#ffffff !important; border:1px solid ' + borderCol + ' !important; border-radius:8px !important; padding:12px 14px !important; margin-bottom:14px !important;">' +
@@ -522,7 +560,7 @@
     var btnStyleAttr = ' style="' + btnStyle + '"';
     var ctaHtml =
       '<button type="button" class="smart-stock-launch-cta-btn" data-smart-stock-launch-cta' + btnStyleAttr + '>' +
-      '<span class="ss-btn-text">🛒 ' + escapeHtml(buttonText) + '<span data-smart-stock-cta-amount> · PAY ' + formatMoney(depositCents) + '</span></span>' +
+      '<span class="ss-btn-text">' + escapeHtml(buttonText) + '<span data-smart-stock-cta-amount> · PAY ' + formatMoney(depositCents) + '</span></span>' +
       '</button>' +
       '<div class="smart-stock-feedback" style="display:none;"></div>';
 
@@ -536,54 +574,16 @@
       ctaHtml;
 
     // ----------------------------------------------------
-    // INJECT STOREFRONT PRODUCT TITLE & PRICE BADGES
+    // CLEANUP ANY PREVIOUS TITLE & PRICE BADGES IF PRESENT
     // ----------------------------------------------------
     try {
-      var titleEl = document.querySelector(
-        ".product__title h1, .product__title, .product-single__title, .product-meta__title, [data-product-title]"
-      );
-      if (titleEl && !document.querySelector(".smart-stock-storefront-preorder-badge")) {
-        var badgeWrap = document.createElement("div");
-        badgeWrap.className = "smart-stock-storefront-preorder-badge";
-        badgeWrap.style.cssText = "display:inline-flex; align-items:center; gap:6px; margin-bottom:8px; margin-top:4px;";
-
-        var bgCol = config.badgeBackgroundColor || "#0F172A";
-        var textCol = config.badgeTextColor || "#FFFFFF";
-        var accentCol = config.accentColor || "#4F46E5";
-
-        badgeWrap.innerHTML =
-          '<span style="display:inline-flex; align-items:center; gap:4px; padding:4px 10px; border-radius:6px; background:' +
-          bgCol +
-          '; color:' +
-          textCol +
-          '; font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; box-shadow:0 1px 2px rgba(0,0,0,0.1);">' +
-          escapeHtml(badgeText || "🛒 PRE-ORDER") +
-          '</span>' +
-          (launchLabel
-            ? '<span style="display:inline-flex; align-items:center; padding:4px 8px; border-radius:6px; background:' +
-              accentCol +
-              '; color:#FFFFFF; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">' +
-              escapeHtml(launchLabel) +
-              '</span>'
-            : "");
-
-        titleEl.parentNode.insertBefore(badgeWrap, titleEl);
+      var existingTitleBadges = document.querySelectorAll(".smart-stock-storefront-preorder-badge");
+      for (var tb = 0; tb < existingTitleBadges.length; tb++) {
+        existingTitleBadges[tb].remove();
       }
-
-      var priceContainer = document.querySelector(
-        ".price__container, .price__sale, .product__info-container .price, .price, .product__price"
-      );
-      if (priceContainer && !document.querySelector(".smart-stock-price-preorder-badge")) {
-        var priceBadge = document.createElement("span");
-        priceBadge.className = "smart-stock-price-preorder-badge";
-        priceBadge.style.cssText =
-          "display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:4px; background:" +
-          (config.badgeBackgroundColor || "#0F172A") +
-          "; color:" +
-          (config.badgeTextColor || "#FFFFFF") +
-          "; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:0.3px; margin-left:8px; vertical-align:middle;";
-        priceBadge.innerHTML = escapeHtml(badgeText || "PRE-ORDER");
-        priceContainer.appendChild(priceBadge);
+      var existingPriceBadges = document.querySelectorAll(".smart-stock-price-preorder-badge");
+      for (var pb = 0; pb < existingPriceBadges.length; pb++) {
+        existingPriceBadges[pb].remove();
       }
     } catch (_) {}
 
@@ -670,6 +670,11 @@
           "Launch Date": formattedLaunchDate,
           "Estimated Shipping": formattedShippingDate || formattedLaunchDate,
         };
+        // If clearance sale is active, record the discounted price info
+        if (clearanceSalePriceCents > 0) {
+          cartProperties["Clearance Sale Price"] = formatMoney(clearanceSalePriceCents * activeQty);
+          cartProperties["_clearance_base_cents"] = clearanceSalePriceCents;
+        }
         if (depositPct > 0) {
           cartProperties["Deposit Paid (" + depositPct + "%)"] = formatMoney(activeDepositCents);
         } else {
@@ -845,7 +850,7 @@
 
     currentProductData = getProductJsonFromPage();
 
-    if (!currentProductId && handle) {
+    if (!currentProductId && handle && !/^\d+$/.test(handle)) {
       try {
         var pRes = await fetch("/products/" + handle + ".js", { headers: { Accept: "application/json" } });
         if (pRes.ok) {
@@ -867,7 +872,13 @@
     }
 
     try {
-      currentConfig = await fetchLaunchConfig(currentShop, currentProductId, handle, currentVariantId);
+      // Fetch clearance sale price alongside pre-order config
+      var [launchConfig, salePriceCents] = await Promise.all([
+        fetchLaunchConfig(currentShop, currentProductId, handle, currentVariantId),
+        fetchClearanceSalePrice(currentShop, currentProductId, currentVariantId)
+      ]);
+      currentConfig = launchConfig;
+      clearanceSalePriceCents = salePriceCents;
       renderLaunchPreOrder(currentShop, currentProductId, currentVariantId, currentConfig);
     } catch (_) {
       cleanupLaunchElements();
@@ -884,6 +895,10 @@
   var isCartEnhancing = false;
   async function enhanceCartDisplay() {
     if (isCartEnhancing) return;
+    var isCartPage = window.location.pathname.indexOf("/cart") !== -1;
+    var hasDrawer = !!document.querySelector("cart-drawer, [data-cart-drawer], .cart-drawer");
+    if (!isCartPage && !hasDrawer) return;
+
     isCartEnhancing = true;
     try {
       var cartRes = await fetch("/cart.js", { headers: { Accept: "application/json" } });

@@ -1534,7 +1534,7 @@ export default function PreOrders({ shopDomain } = {}) {
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", marginBottom: "14px" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                         <span style={{ fontSize: "16.5px", fontWeight: "800", color: configForm.textColor || "#0F172A", letterSpacing: "-0.2px", lineHeight: "1.3" }}>
-                          🚀 {configForm.launchTitle || "New Product Launch"}
+                          {configForm.launchTitle || "New Product Launch"}
                         </span>
                       </div>
 
@@ -1602,7 +1602,7 @@ export default function PreOrders({ shopDomain } = {}) {
                           }}
                         >
                           <span style={{ fontSize: "11px", fontWeight: "700", color: "#64748B", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                            📅 LAUNCH DATE
+                            LAUNCH DATE
                           </span>
                           <span style={{ fontSize: "14px", fontWeight: "800", color: configForm.textColor || "#0F172A", letterSpacing: "-0.1px" }}>
                             {formatDate(configForm.launchDate)}
@@ -1624,7 +1624,7 @@ export default function PreOrders({ shopDomain } = {}) {
                           }}
                         >
                           <span style={{ fontSize: "11px", fontWeight: "700", color: "#64748B", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                            📦 SHIPPING STARTS
+                            SHIPPING STARTS
                           </span>
                           <span style={{ fontSize: "14px", fontWeight: "800", color: configForm.textColor || "#0F172A", letterSpacing: "-0.1px" }}>
                             {formatDate(configForm.shippingDate)}
@@ -1648,7 +1648,7 @@ export default function PreOrders({ shopDomain } = {}) {
                           lineHeight: "1.4",
                         }}
                       >
-                        ✨ {configForm.customerMessage}
+                        {configForm.customerMessage}
                       </div>
                     )}
 
@@ -1726,7 +1726,7 @@ export default function PreOrders({ shopDomain } = {}) {
                         </div>
 
                         <div style={{ marginTop: "10px", paddingTop: "8px", borderTop: `1px solid ${configForm.borderColor || "#F1F5F9"}`, fontSize: "11.5px", color: "#64748B", lineHeight: "1.45" }}>
-                          💡 Pay { (configForm.depositPercentage === 0 || configForm.depositPercentage === "0") ? `$${Number(configForm.depositAmount || 0).toFixed(2)}` : `${configForm.depositPercentage || 50}%` } now to secure your pre-order. Remaining balance will be due before shipping.
+                          Pay { (configForm.depositPercentage === 0 || configForm.depositPercentage === "0") ? `$${Number(configForm.depositAmount || 0).toFixed(2)}` : `${configForm.depositPercentage || 50}%` } now to secure your pre-order. Remaining balance will be due before shipping.
                         </div>
                       </div>
                     )}
@@ -1751,7 +1751,7 @@ export default function PreOrders({ shopDomain } = {}) {
                         padding: "12px 20px",
                       }}
                     >
-                      🛒 {configForm.buttonText || "PRE-ORDER NOW"} · PAY $
+                      {configForm.buttonText || "PRE-ORDER NOW"} · PAY $
                       {(() => {
                         const selP = storeProducts.find((p) => p.id === configForm.productId);
                         const pPrice = Number(configForm.productPrice || configForm.price || selP?.price || (configForm.productId ? 126790 : 126790));

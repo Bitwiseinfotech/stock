@@ -36,7 +36,7 @@ export default function LockedFeatureOverlay({
         backgroundColor: "rgba(255, 255, 255, 0.96)",
         borderRadius: "12px",
         display: "flex",
-        flexDirection: "column",
+        flexDirection: "column",         
         alignItems: "center",
         justifyContent: "center",
         padding: "16px",
@@ -47,23 +47,6 @@ export default function LockedFeatureOverlay({
       }}
     >
       <BlockStack gap="150" align="center">
-        <div
-          style={{
-            width: "38px",
-            height: "38px",
-            borderRadius: "50%",
-            backgroundColor: "#fef3c7",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            margin: "0 auto",
-            fontSize: "20px",
-            boxShadow: "0 2px 6px rgba(245, 158, 11, 0.2)",
-          }}
-        >
-          🔒
-        </div>
-
         <Text variant="headingSm" as="h3" fontWeight="bold">
           {requiredPlan} Feature
         </Text>

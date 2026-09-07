@@ -3,10 +3,9 @@
   <script>
     (function() {
       try {
-        var origWarn = console.warn;
-        if (origWarn && !console.__ss_silence_patched) {
-          console.__ss_silence_patched = true;
-          console.warn = function() {
+        var filterDeprecation = function(origFn) {
+          if (!origFn) return origFn;
+          return function() {
             var msg = "";
             for (var i = 0; i < arguments.length; i++) {
               try {
@@ -26,8 +25,14 @@
             ) {
               return;
             }
-            return origWarn.apply(console, arguments);
+            return origFn.apply(console, arguments);
           };
+        };
+        if (!console.__ss_silence_patched) {
+          console.__ss_silence_patched = true;
+          if (console.warn) console.warn = filterDeprecation(console.warn);
+          if (console.error) console.error = filterDeprecation(console.error);
+          if (console.info) console.info = filterDeprecation(console.info);
         }
         window.addEventListener('error', function(e) {
           var msg = (e && e.message) ? String(e.message) : '';

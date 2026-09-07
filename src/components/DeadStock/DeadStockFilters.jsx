@@ -123,7 +123,7 @@ export default function DeadStockFilters({
             icon={DiscountIcon}
             onClick={onCollectionBulkSale}
           >
-            {isLocked ? "Collection Bulk Sale 🔒" : "Collection Bulk Sale"}
+            {isLocked ? "Collection Bulk Sale" : "Collection Bulk Sale"}
           </Button>
         </div>
       </div>

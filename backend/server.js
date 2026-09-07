@@ -353,6 +353,10 @@ app.use(
   "/api/storefront",
   require("./routes/storefrontRoutes")
 );
+app.use(
+  "/api/storefront/api/storefront",
+  require("./routes/storefrontRoutes")
+);
 // ==================================================
 // DASHBOARD
 // ==================================================

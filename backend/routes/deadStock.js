@@ -13,6 +13,7 @@ const {
   createProgressiveMarkdown,
   stopProgressiveMarkdown,
   pauseProgressiveMarkdown,
+  evaluateProgressiveMarkdown,
   getProgressiveMarkdown,
   listProgressiveMarkdownRules,
   createBundle,
@@ -83,6 +84,11 @@ router.post(
   "/:variantId/markdown",
   checkPlanLimit("progressiveMarkdown"),
   createProgressiveMarkdown
+);
+
+router.post(
+  "/:variantId/markdown/evaluate",
+  evaluateProgressiveMarkdown
 );
 
 router.delete(

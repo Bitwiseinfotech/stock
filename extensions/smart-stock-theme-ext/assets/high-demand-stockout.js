@@ -417,7 +417,7 @@
         });
 
         if (!response.ok) {
-          response = await fetch(`/api/storefront/stockout-notify`, {
+          response = await fetch(`/apps/smart-stock/notify`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
             body: JSON.stringify(payload),
@@ -573,7 +573,10 @@
 
     // RULE 1: IN STOCK (Stock > 0) -> Low stock urgency badge if enabled
     if (stock > 0) {
-      return isLowStockBadgeEnabled && stock <= threshold ? "LOW_STOCK" : "HEALTHY";
+      const showBadge = data.lowStockBadge?.show !== undefined
+        ? parseBoolean(data.lowStockBadge.show)
+        : isLowStockBadgeEnabled;
+      return showBadge ? "LOW_STOCK" : "HEALTHY";
     }
 
     // RULE 2: OUT OF STOCK (Stock <= 0) -> Notify Me only (Pre-orders handled exclusively by Launch Pre-Order)
@@ -604,8 +607,12 @@
 
     syncPurchaseControls("HEALTHY");
 
-    // Render Low Stock badge when stock <= threshold
-    if (!isLowStockBadgeEnabled || stock > threshold) {
+    // Render Low Stock badge when enabled and stock > 0
+    const showBadge = data.lowStockBadge?.show !== undefined
+      ? parseBoolean(data.lowStockBadge.show)
+      : (isLowStockBadgeEnabled && stock > 0);
+
+    if (!showBadge || stock <= 0) {
       return;
     }
 
@@ -659,16 +666,17 @@
       const raw = sessionStorage.getItem(cacheKey);
       if (raw) {
         const cached = JSON.parse(raw);
-        if (cached && cached.data) {
+        if (cached && cached.data && cached.data.show !== false && Date.now() - (cached.time || 0) < 30000) {
           renderStockoutState(cached.data, variantId);
+        } else {
+          sessionStorage.removeItem(cacheKey);
         }
       }
     } catch (_) {}
 
     const proxyUrls = [
-      `/apps/smart-stock/stockout-shield?shop=${encodeURIComponent(shop)}&variantId=${encodeURIComponent(variantId)}&productId=${encodeURIComponent(productId)}`,
-      `/apps/smart-stock/high-demand?shop=${encodeURIComponent(shop)}&variantId=${encodeURIComponent(variantId)}&productId=${encodeURIComponent(productId)}`,
-      `/api/storefront/stockout-shield?shop=${encodeURIComponent(shop)}&variantId=${encodeURIComponent(variantId)}&productId=${encodeURIComponent(productId)}`
+      `/apps/smart-stock/stockout-shield?shop=${encodeURIComponent(shop)}&variantId=${encodeURIComponent(variantId)}&productId=${encodeURIComponent(productId)}&_t=${Date.now()}`,
+      `/apps/smart-stock/high-demand?shop=${encodeURIComponent(shop)}&variantId=${encodeURIComponent(variantId)}&productId=${encodeURIComponent(productId)}&_t=${Date.now()}`,
     ];
 
     let data = null;

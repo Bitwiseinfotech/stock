@@ -371,3 +371,10 @@
   color: #991b1b !important;
   border: 1px solid #fecaca !important;
 }
+
+/* Hide extra title and price preorder badges */
+.smart-stock-storefront-preorder-badge,
+.smart-stock-price-preorder-badge {
+  display: none !important;
+}
+

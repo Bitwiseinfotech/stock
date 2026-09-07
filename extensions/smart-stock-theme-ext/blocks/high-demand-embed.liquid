@@ -1,5 +1,41 @@
 {% if request.page_type == 'product' %}
 
+<script>
+(function() {
+  try {
+    var filterDeprecation = function(origFn) {
+      if (!origFn) return origFn;
+      return function() {
+        var msg = "";
+        for (var i = 0; i < arguments.length; i++) {
+          try {
+            var it = arguments[i];
+            msg += " " + (typeof it === "object" ? (it && it.message ? it.message : JSON.stringify(it)) : String(it));
+          } catch (_) {
+            msg += " " + String(arguments[i]);
+          }
+        }
+        if (
+          msg.indexOf("deprecated parameters") !== -1 ||
+          msg.indexOf("initialization function") !== -1 ||
+          msg.indexOf("pass a single object instead") !== -1 ||
+          msg.indexOf("preloaded using link preload") !== -1
+        ) {
+          return;
+        }
+        return origFn.apply(console, arguments);
+      };
+    };
+    if (!console.__ss_silence_patched) {
+      console.__ss_silence_patched = true;
+      if (console.warn) console.warn = filterDeprecation(console.warn);
+      if (console.error) console.error = filterDeprecation(console.error);
+      if (console.info) console.info = filterDeprecation(console.info);
+    }
+  } catch (_) {}
+})();
+</script>
+
 <div
   id="smart-stock-high-demand"
   data-product-id="{{ product.id }}"

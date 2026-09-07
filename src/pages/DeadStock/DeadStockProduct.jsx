@@ -538,7 +538,7 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
       title={product.title || "Dead Stock Product"}
       subtitle={`SKU: ${sku || "N/A"}`}
       titleMetadata={
-        <InlineStack gap="200" blockAlign="center">
+        <InlineStack gap="200" blockAlign="center" wrap={true}>
           <Badge tone={daysUnsold >= 60 ? "critical" : "warning"}>
             {daysUnsold >= 60 ? "🚨 Dead Stock (60+ days)" : `${daysUnsold} Days Unsold`}
           </Badge>
@@ -709,7 +709,7 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
                     Apply immediate price discounts to liquidate stagnant inventory and recover working capital quickly.
                   </Text>
 
-                  <InlineStack gap="200" align="start">
+                  <InlineStack gap="200" align="start" wrap={true}>
                     <Button
                       variant={isClearanceActive ? "secondary" : "primary"}
                       onClick={() => openModal("clearance")}
@@ -736,7 +736,7 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
                     <LockedFeatureOverlay requiredPlan="Basic" />
                   )}
                   <BlockStack gap="300">
-                    <InlineStack align="space-between" blockAlign="center">
+                    <InlineStack align="space-between" blockAlign="center" wrap={true}>
                       <Text variant="headingSm" as="h3" fontWeight="semibold">
                         📦 Dead Stock Bundle
                       </Text>
@@ -749,7 +749,7 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
                       Bundle this slow-moving item with a popular companion product to increase perceived value and volume.
                     </Text>
 
-                    <InlineStack gap="200" align="start">
+                    <InlineStack gap="200" align="start" wrap={true}>
                       <Button
                         variant={product?.activeBundle ? "secondary" : "primary"}
                         onClick={() => openModal("bundle")}
@@ -792,7 +792,7 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
                       Automatically step down discounts at set time intervals to achieve sales while maximizing revenue.
                     </Text> 
 
-                    <InlineStack gap="200" align="start">
+                    <InlineStack gap="200" align="start" wrap={true}>
                       <Button
                         variant={product?.activeMarkdownRule ? "secondary" : "primary"}
                         onClick={() => openModal("markdown")}
@@ -821,7 +821,7 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
           <Layout.Section>
             <Card>
               <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
+                <InlineStack align="space-between" blockAlign="center" wrap={true}>
                   <Text variant="headingSm" as="h3">Action Log</Text>
                   {actionsLog.length > 3 && (
                     <Text variant="bodySm" tone="subdued" as="span">
@@ -836,14 +836,19 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
-                      padding: "12px 16px",
+                      flexWrap: "wrap",
+                      gap: "8px",
+                      padding: "12px 14px",
                       backgroundColor: "#F8FAFC",
                       borderRadius: "8px",
                       fontSize: "13px",
                       border: "1px solid #E2E8F0",
+                      wordBreak: "break-word",
+                      maxWidth: "100%",
+                      boxSizing: "border-box",
                     }}
                   >
-                    <div>
+                    <div style={{ minWidth: 0, flex: "1 1 200px" }}>
                       <strong>{log.actionType}</strong> — {new Date(log.createdAt).toLocaleString()}
                       {log.error && <div style={{ color: "#EF4444", marginTop: "2px" }}>Error: {log.error}</div>}
                     </div>
