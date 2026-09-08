@@ -37,6 +37,7 @@
   console.log("[Smart Stock] Authoritative Stockout Shield controller initialized");
 
   let activeVariantId = null;
+  let activeProductId = null;
   let activeGeneration = 0;
   let activeAbortController = null;
   let debounceTimer = null;
@@ -124,6 +125,7 @@
   }
 
   function getProductId() {
+    if (activeProductId) return activeProductId;
     const liquidBlock = document.getElementById("smart-stock-high-demand");
     if (liquidBlock?.dataset?.productId) {
       return normalizeVariantId(liquidBlock.dataset.productId);
@@ -152,8 +154,9 @@
           if (res.ok) {
             const prodData = await res.json();
             if (prodData) {
-              if (!productId && prodData.id) {
-                productId = String(prodData.id);
+              if (prodData.id) {
+                activeProductId = String(prodData.id);
+                if (!productId) productId = activeProductId;
               }
               if (prodData.variants && prodData.variants.length > 0) {
                 const params = new URLSearchParams(window.location.search);
@@ -171,6 +174,10 @@
       } catch (err) {
         // Fallback silently
       }
+    }
+
+    if (productId && !activeProductId) {
+      activeProductId = productId;
     }
 
     return { variantId, productId };
@@ -607,12 +614,12 @@
 
     syncPurchaseControls("HEALTHY");
 
-    // Render Low Stock badge when enabled and stock > 0
+    // Render Low Stock badge when enabled
     const showBadge = data.lowStockBadge?.show !== undefined
       ? parseBoolean(data.lowStockBadge.show)
-      : (isLowStockBadgeEnabled && stock > 0);
+      : isLowStockBadgeEnabled;
 
-    if (!showBadge || stock <= 0) {
+    if (!showBadge) {
       return;
     }
 
@@ -625,8 +632,9 @@
     shieldEl.id = "smart-stock-stockout-shield";
     shieldEl.className = "smart-stock-high-demand";
 
-    const badgeMessage = data.lowStockBadge?.message || `🔥 Only ${stock} left in stock!`;
-    const badgeSubtext = data.lowStockBadge?.subtext || "";
+    const defaultMsg = stock > 0 ? `🔥 Only ${stock} left in stock!` : `🔥 High Demand — Almost Sold Out!`;
+    const badgeMessage = data.lowStockBadge?.message || data.widget?.message || defaultMsg;
+    const badgeSubtext = data.lowStockBadge?.subtext || data.widget?.subtext || "";
     const bgColor = data.lowStockBadge?.backgroundColor || "#FFF1F2";
     const borderColor = data.lowStockBadge?.borderColor || "#FECDD3";
     const textColor = data.lowStockBadge?.textColor || "#991B1B";

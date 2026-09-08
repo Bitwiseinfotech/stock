@@ -18,9 +18,9 @@ async function createBundle(req, res) {
             companionVariantId,
             discountPercent,
         } = req.body;
-
+ 
         if (!shop) {
-            return res.status(400).json({
+            return res.status(400).json({      
                 success: false,
                 message: "Shop is required",
             });

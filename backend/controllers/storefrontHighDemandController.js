@@ -239,6 +239,10 @@ async function getHighDemandStorefrontWidget(req, res) {
 
     const isSmartAssignmentLowStock = smartAssignment && smartAssignment.status === "ACTIVE" && smartAssignment.badgeType === "LOW_STOCK";
 
+    const isExplicitlyDisabled =
+      configDoc?.lowStockBadge?.enabled === false ||
+      configDoc?.urgencyBadgeEnabled === false;
+
     const isExplicitlyEnabledOnProduct =
       parseBoolean(configDoc?.lowStockBadge?.enabled) ||
       parseBoolean(configDoc?.urgencyBadgeEnabled) ||
@@ -248,7 +252,8 @@ async function getHighDemandStorefrontWidget(req, res) {
     const isLowStockBadgeConfigured =
       Boolean(isSmartAssignmentLowStock) ||
       Boolean(smartBadgeLowStock) ||
-      (isGlobalLowStockEnabled && isExplicitlyEnabledOnProduct);
+      isExplicitlyEnabledOnProduct ||
+      (isGlobalLowStockEnabled && currentStock <= threshold);
 
     const isPreOrderConfigured =
       parseBoolean(configDoc?.preOrder?.enabled) ||
@@ -256,15 +261,7 @@ async function getHighDemandStorefrontWidget(req, res) {
       parseBoolean(highDemandDoc?.preOrder?.enabled) ||
       parseBoolean(highDemandDoc?.preOrderEnabled);
 
-    // Send all enabled controls so they can render line by line on the storefront.
-    // If explicitly enabled on this product by merchant, display whenever currentStock > 0!
-    // Otherwise (general/global rule), check currentStock <= threshold
-    const showLowStockBadge = isLowStockBadgeConfigured && currentStock > 0 && (
-      isExplicitlyEnabledOnProduct ||
-      Boolean(isSmartAssignmentLowStock) ||
-      Boolean(smartBadgeLowStock) ||
-      currentStock <= threshold
-    );
+    const showLowStockBadge = !isExplicitlyDisabled && isLowStockBadgeConfigured;
     const showPreOrder = false;
     const isOverallShown = showLowStockBadge;
 
@@ -273,9 +270,15 @@ async function getHighDemandStorefrontWidget(req, res) {
 
     if (showLowStockBadge) {
       const templateText = configDoc?.badgeText || globalLowStockConfig?.badgeText || "🔥 Only {stock} left in stock!";
-      badgeMessage = currentStock > 0
-        ? templateText.replace(/\{stock\}/gi, String(currentStock))
-        : `🔥 High Demand — Almost Sold Out!`;
+      if (currentStock > 0) {
+        badgeMessage = templateText.replace(/\{stock\}/gi, String(currentStock));
+      } else {
+        if (/\{stock\}/i.test(templateText)) {
+          badgeMessage = "🔥 High Demand — Almost Sold Out!";
+        } else {
+          badgeMessage = templateText;
+        }
+      }
 
       if (showDaysRemaining && typeof daysUntilStockout === "number" && daysUntilStockout > 0) {
         const daysText = daysUntilStockout <= 1 ? "estimated 1 day remaining." : `estimated ${Math.ceil(daysUntilStockout)} days remaining.`;

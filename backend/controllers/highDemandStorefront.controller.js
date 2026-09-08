@@ -98,15 +98,14 @@ async function getHighDemandStorefrontStatus(req, res) {
     const isUrgencyConfigured = Boolean(config?.urgencyBadgeEnabled);
     const isPreOrderConfigured = Boolean(config?.preOrderEnabled);
 
-    // Rule:
-    // If stock <= 0: Urgency badge should NOT show; Pre-Order can show if enabled.
-    // If stock > 0: Urgency badge shows if enabled; Pre-Order does not show.
-    const showUrgencyBadge = isUrgencyConfigured && stock > 0;
+    const showUrgencyBadge = isUrgencyConfigured;
     const showPreOrder = isPreOrderConfigured && stock <= 0;
     const isOverallEnabled = showUrgencyBadge || showPreOrder;
 
     const rawBadgeText = config?.badgeText || "Only {stock} left in stock!";
-    const formattedBadgeText = rawBadgeText.replace("{stock}", String(stock));
+    const formattedBadgeText = stock > 0
+      ? rawBadgeText.replace("{stock}", String(stock))
+      : (/\{stock\}/i.test(rawBadgeText) ? "🔥 High Demand — Almost Sold Out!" : rawBadgeText);
 
     return res.status(200).json({
       success: true,
