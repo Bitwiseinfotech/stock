@@ -106,32 +106,50 @@ async function computeDashboardMetrics(shop) {
 
   if (storeRecord?.accessToken) {
     try {
-      const [orderRes, prodRes] = await Promise.all([
-        shopifyGraphQL(shop, storeRecord.accessToken, `
-          query getDashboardOrders {
-            orders(first: 250, sortKey: CREATED_AT, reverse: true) {
-              nodes {
-                id
-                name
-                createdAt
-                totalPriceSet { shopMoney { amount } }
-                customAttributes { key value }
-                lineItems(first: 20) {
-                  nodes {
-                    title
-                    quantity
-                    originalTotalSet { shopMoney { amount } }
-                    customAttributes { key value }
-                    variant { id price product { id title } }
-                  }
+      // Build date filter: past 6 calendar months from start of 6 months ago
+      const sixMonthsAgo = new Date();
+      sixMonthsAgo.setDate(1);
+      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
+      sixMonthsAgo.setHours(0, 0, 0, 0);
+      const dateFilter = sixMonthsAgo.toISOString().split("T")[0]; // e.g. "2026-04-01"
+
+      // Paginate orders: fetch up to 10 pages × 250 = 2500 orders within the 6-month window
+      const fetchOrdersPage = (cursor) => shopifyGraphQL(shop, storeRecord.accessToken, `
+        query getDashboardOrders($cursor: String) {
+          orders(
+            first: 250,
+            sortKey: CREATED_AT,
+            reverse: true,
+            query: "created_at:>=${dateFilter}",
+            after: $cursor
+          ) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              id
+              name
+              createdAt
+              totalPriceSet { shopMoney { amount } }
+              customAttributes { key value }
+              lineItems(first: 20) {
+                nodes {
+                  title
+                  quantity
+                  originalTotalSet { shopMoney { amount } }
+                  customAttributes { key value }
+                  variant { id price product { id title } }
                 }
               }
             }
           }
-        `),
+        }
+      `, { cursor: cursor || null });
+
+      // Fetch products and first orders page in parallel
+      const [firstOrderRes, prodRes] = await Promise.all([
+        fetchOrdersPage(null),
         shopifyGraphQL(shop, storeRecord.accessToken, `
           query getDashboardProducts {
-            products(first: 100) {
+            products(first: 250) {
               nodes {
                 id
                 title
@@ -149,7 +167,21 @@ async function computeDashboardMetrics(shop) {
         `),
       ]);
 
-      liveOrders = orderRes?.orders?.nodes || [];
+      // Collect all order pages
+      let allOrderNodes = [...(firstOrderRes?.orders?.nodes || [])];
+      let pageInfo = firstOrderRes?.orders?.pageInfo;
+      let pageCount = 1;
+      const MAX_PAGES = 10;
+
+      while (pageInfo?.hasNextPage && pageCount < MAX_PAGES) {
+        const nextRes = await fetchOrdersPage(pageInfo.endCursor);
+        allOrderNodes = allOrderNodes.concat(nextRes?.orders?.nodes || []);
+        pageInfo = nextRes?.orders?.pageInfo;
+        pageCount++;
+      }
+
+      liveOrders = allOrderNodes;
+
       const products = prodRes?.products?.nodes || [];
       for (const p of products) {
         for (const v of p.variants?.nodes || []) {
