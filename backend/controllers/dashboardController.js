@@ -627,7 +627,7 @@ async function computeDashboardMetrics(shop) {
           cashRecovered: bundleRecovered,
           percentage: totalCashRecovered > 0 ? Math.round((bundleRecovered / totalCashRecovered) * 100) : 0,
           color: "#F59E0B",
-          link: "/app/bundles",
+          link: "/app/dead-stock",
         },
         {
           key: "markdown",

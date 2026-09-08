@@ -80,7 +80,7 @@ const DEFAULT_DASHBOARD_DATA = {
       cashRecovered: 0,
       percentage: 0,
       color: "#F59E0B",
-      link: "/app/bundles",
+      link: "/app/dead-stock",
     },
     {
       key: "markdown",
@@ -744,7 +744,10 @@ export default function Dashboard({ shopDomain = "" }) {
                         <span>{item.badgesUsed.toLocaleString()} products enrolled</span>
                         <span
                           style={{ color: "#2C6ECB", cursor: "pointer", fontWeight: "500" }}
-                          onClick={() => item.link && navigateWithParams(item.link)}
+                          onClick={() => {
+                            const targetLink = item.key === "bundle" ? "/app/dead-stock" : (item.link || "/app/dead-stock");
+                            navigateWithParams(targetLink);
+                          }}
                         >
                           Manage →
                         </span>
