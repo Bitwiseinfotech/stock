@@ -272,6 +272,13 @@ export default function MarkdownCustomizeModal({
 
           {/* FORM CONTROLS */}
           <FormLayout>
+            <Checkbox
+              label="Enable Progressive Markdown component on storefront"
+              checked={settings.enabled !== false}
+              onChange={(checked) => setSettings({ ...settings, enabled: checked })}
+              helpText="Toggle visibility of the progressive markdown discount badges on the storefront."
+            />
+
             <TextField
               label="Badge Text Format"
               value={settings.badgeText}

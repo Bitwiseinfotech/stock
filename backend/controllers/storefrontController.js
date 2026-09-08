@@ -212,7 +212,11 @@ async function getProductWidgetData(req, res) {
       );
     }
 
-    const [activeBundle, userClearanceConfig] = await Promise.all([
+    const cleanShopDomain = String(shopId).replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+    const LowStockBadgeConfig = require("../models/LowStockBadgeConfig");
+    const PreOrderConfig = require("../models/PreOrderConfig");
+
+    const [activeBundle, userClearanceConfig, globalLowStockConfig, globalPreOrderConfig] = await Promise.all([
       bundleOrConditions.length > 0
         ? Bundle.findOne({
           shop: shopId,
@@ -223,12 +227,25 @@ async function getProductWidgetData(req, res) {
           .lean()
           .catch(() => null)
         : null,
-      ClearanceSaleConfig.findOne({ shopId }).lean().catch(() => null),
+      ClearanceSaleConfig.findOne({
+        $or: [{ shopId }, { shopId: cleanShopDomain }, { shopId: new RegExp(`^${cleanShopDomain}$`, "i") }],
+      }).lean().catch(() => null),
+      LowStockBadgeConfig.findOne({
+        $or: [{ shop: shopId }, { shop: cleanShopDomain }, { shop: new RegExp(`^${cleanShopDomain}$`, "i") }],
+      }).lean().catch(() => null),
+      PreOrderConfig.findOne({
+        $or: [{ shop: shopId }, { shop: cleanShopDomain }, { shop: new RegExp(`^${cleanShopDomain}$`, "i") }],
+      }).lean().catch(() => null),
     ]);
+
+    const isClearanceGloballyEnabled = userClearanceConfig ? userClearanceConfig.enabled !== false : true;
+    const isGlobalLowStockEnabled = globalLowStockConfig ? globalLowStockConfig.enabled !== false : true;
+    const isGlobalPreOrderEnabled = globalPreOrderConfig ? globalPreOrderConfig.enabled !== false : true;
 
     const clearanceConfig = {
       ...DEFAULT_CLEARANCE_CONFIG,
       ...(userClearanceConfig || {}),
+      enabled: isClearanceGloballyEnabled,
     };
 
     const finalDiscountPercent = Number.isFinite(Number(clearanceSale?.discountValue ?? clearanceSale?.discountPercent)) && Number(clearanceSale?.discountValue ?? clearanceSale?.discountPercent) > 0
@@ -236,7 +253,6 @@ async function getProductWidgetData(req, res) {
       : Number(clearanceConfig?.discountPercentage ?? 10);
 
     const BundleConfig = require("../models/BundleConfig");
-    const cleanShopDomain = String(shopId).replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
     const bundleConfigRaw = await BundleConfig.findOne({
       $or: [{ shop: cleanShopDomain }, { shop: shopId }, { shop: new RegExp(`^${cleanShopDomain}$`, "i") }, { shopId: cleanShopDomain }],
     }).lean().catch(() => null);
@@ -424,18 +440,18 @@ async function getProductWidgetData(req, res) {
       false
     );
 
-    const isUrgencyActive = isSmartLowStock || isExplicitlyEnabledOnProduct;
-    const isUrgencyShowing = isUrgencyActive && stock > 0 && (
+    const isUrgencyActive = isGlobalLowStockEnabled && (isSmartLowStock || isExplicitlyEnabledOnProduct);
+    const isUrgencyShowing = isGlobalLowStockEnabled && isUrgencyActive && stock > 0 && (
       isExplicitlyEnabledOnProduct ||
       isSmartLowStock ||
       isLowStock
     );
 
-    const isPreOrderActive = isSmartPreOrder || parseBoolean(
+    const isPreOrderActive = isGlobalPreOrderEnabled && (isSmartPreOrder || parseBoolean(
       storefrontSetting?.preOrder?.enabled ??
       storefrontSetting?.preOrderEnabled ??
       false
-    );
+    ));
 
     const isNotifyMeActive = parseBoolean(
       storefrontSetting?.notifyMe?.enabled ??
@@ -460,11 +476,10 @@ async function getProductWidgetData(req, res) {
       notifyMeEnabled: isNotifyMeActive,
     };
 
-    // A Clearance Sale offer MUST only show if a real active/scheduled ClearanceSale record exists in DB
-    const hasClearanceOffer = Boolean(clearanceSale);
-    if (hasClearanceOffer) {
-      clearanceConfig.enabled = true;
-    }
+    // A Clearance Sale offer MUST only show if a real active/scheduled ClearanceSale record exists in DB AND is globally enabled
+    const hasClearanceOffer = Boolean(clearanceSale) && isClearanceGloballyEnabled;
+    clearanceConfig.enabled = isClearanceGloballyEnabled;
+
     const origPriceNum = Number(originalPrice) || 0;
     const finalDiscountVal = hasClearanceOffer ? Number(clearanceSale?.discountValue ?? clearanceSale?.discountPercent ?? 0) : 0;
     const calcSalePrice = hasClearanceOffer && origPriceNum > 0
@@ -476,11 +491,12 @@ async function getProductWidgetData(req, res) {
 
     const MarkdownConfig = require("../models/MarkdownConfig");
     const userMarkdownConfig = await MarkdownConfig.findOne({
-      $or: [{ shop: shopId }, { shop: new RegExp(`^${shopId}$`, "i") }],
+      $or: [{ shop: shopId }, { shop: cleanShopDomain }, { shop: new RegExp(`^${cleanShopDomain}$`, "i") }],
     }).lean().catch(() => null);
 
-    // Progressive Markdown MUST only be enabled if a real active MarkdownRule exists
-    const activeMarkdownData = (markdownData && markdownData.enabled) ? markdownData : { enabled: false };
+    const isMarkdownGloballyEnabled = userMarkdownConfig ? userMarkdownConfig.enabled !== false : true;
+    // Progressive Markdown MUST only be enabled if a real active MarkdownRule exists AND markdown is globally enabled
+    const activeMarkdownData = (markdownData && markdownData.enabled && isMarkdownGloballyEnabled) ? markdownData : { enabled: false };
 
     const isRealBundleActive = Boolean(hasBundleOffer && activeBundle && resolvedBundle);
 
@@ -496,12 +512,12 @@ async function getProductWidgetData(req, res) {
       widget: stockoutShield,
       smartBadge: smartApp?.badgeType || (activeLaunchPreOrder ? "PRE_ORDER" : null),
       urgencyBadge: {
-        enabled: Boolean(isUrgencyShowing || (isSmartLowStock && stock > 0)),
-        show: Boolean(isUrgencyShowing || (isSmartLowStock && stock > 0)),
-        text: stock > 0 ? (storefrontSetting?.badgeText || `🔥 Only ${stock} left in stock!`).replace(/\{stock\}/gi, String(stock)) : "",
+        enabled: Boolean(isGlobalLowStockEnabled && (isUrgencyShowing || (isSmartLowStock && stock > 0))),
+        show: Boolean(isGlobalLowStockEnabled && (isUrgencyShowing || (isSmartLowStock && stock > 0))),
+        text: (isGlobalLowStockEnabled && stock > 0) ? (storefrontSetting?.badgeText || `🔥 Only ${stock} left in stock!`).replace(/\{stock\}/gi, String(stock)) : "",
       },
       preOrder: {
-        enabled: Boolean(isPreOrderActive),
+        enabled: Boolean(isGlobalPreOrderEnabled && isPreOrderActive),
         buttonText: activeLaunchPreOrder?.buttonText || "🛒 Pre-Order Now",
         badgeText: activeLaunchPreOrder?.badgeText || "🛒 PRE-ORDER",
         launchLabel: activeLaunchPreOrder?.launchLabel || "NEW LAUNCH",
@@ -525,6 +541,7 @@ async function getProductWidgetData(req, res) {
           borderRadius: 4,
           showStrikethroughPrice: true,
         };
+        mc.enabled = isMarkdownGloballyEnabled;
         // Sanitize any stray leading % in the badge template (e.g. "% {discount}% OFF" → "{discount}% OFF")
         if (mc.badgeText && typeof mc.badgeText === "string") {
           mc.badgeText = mc.badgeText.replace(/^%\s*/, "").trim();
@@ -533,7 +550,7 @@ async function getProductWidgetData(req, res) {
       })(),
       progressiveMarkdown: activeMarkdownData,
       deadStockOffer: {
-        hasClearance: Boolean(hasClearanceOffer),
+        hasClearance: Boolean(hasClearanceOffer && isClearanceGloballyEnabled),
         productId: hasClearanceOffer ? (clearanceSale?.productId || cleanProdId || null) : null,
         saleVariantId: hasClearanceOffer ? (clearanceSale?.variantId || cleanVarId || null) : null,
         discountPercent: hasClearanceOffer ? finalDiscountVal : 0,

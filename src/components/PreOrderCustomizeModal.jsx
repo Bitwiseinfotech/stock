@@ -3,6 +3,7 @@ import {
   Modal,
   FormLayout,
   TextField,
+  Checkbox,
   BlockStack,
   InlineStack,
   Text,
@@ -462,6 +463,13 @@ export default function PreOrderCustomizeModal({
 
           {/* FORM CONTROLS: LABELS & TEXTS */}
           <FormLayout>
+            <Checkbox
+              label="Enable Pre-Orders component on storefront"
+              checked={settings.enabled !== false}
+              onChange={(checked) => setSettings({ ...settings, enabled: checked })}
+              helpText="Toggle visibility of pre-order cards and buttons on the storefront."
+            />
+
             <InlineStack gap="400">
               <div style={{ flex: 1 }}>
                 <TextField

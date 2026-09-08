@@ -391,11 +391,7 @@
       data &&
       data.deadStockOffer;
 
-    if (
-      cfg &&
-      cfg.enabled === false &&
-      (!sale || !sale.hasClearance)
-    ) {
+    if (cfg && cfg.enabled === false) {
       document
         .querySelectorAll(
           '[data-smart-stock-feature="clearance"]'
@@ -1515,7 +1511,7 @@
      ========================================================= */
 
   function renderMarkdown(data) {
-    if (!data?.progressiveMarkdown?.enabled) {
+    if (!data?.progressiveMarkdown?.enabled || data?.markdownConfig?.enabled === false) {
       document
         .querySelectorAll('[data-smart-stock-feature="markdown"], .smart-stock-progressive-markdown-wrapper, [data-progressive-markdown-root], .smart-stock-markdown-badge, [data-markdown-badge]')
         .forEach((element) => {

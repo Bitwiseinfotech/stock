@@ -250,18 +250,27 @@ async function getHighDemandStorefrontWidget(req, res) {
       parseBoolean(highDemandDoc?.urgencyBadgeEnabled);
 
     const isLowStockBadgeConfigured =
-      Boolean(isSmartAssignmentLowStock) ||
+      isGlobalLowStockEnabled &&
+      (Boolean(isSmartAssignmentLowStock) ||
       Boolean(smartBadgeLowStock) ||
       isExplicitlyEnabledOnProduct ||
-      (isGlobalLowStockEnabled && currentStock <= threshold);
+      currentStock <= threshold);
+
+    const PreOrderConfig = require("../models/PreOrderConfig");
+    const globalPreOrderConfig = await PreOrderConfig.findOne({
+      $or: [{ shop }, { shop: new RegExp(`^${shop}$`, "i") }],
+    }).lean().catch(() => null);
+    const isGlobalPreOrderEnabled = globalPreOrderConfig ? Boolean(globalPreOrderConfig.enabled) : true;
 
     const isPreOrderConfigured =
-      parseBoolean(configDoc?.preOrder?.enabled) ||
-      parseBoolean(configDoc?.preOrderEnabled) ||
-      parseBoolean(highDemandDoc?.preOrder?.enabled) ||
-      parseBoolean(highDemandDoc?.preOrderEnabled);
+      isGlobalPreOrderEnabled && (
+        parseBoolean(configDoc?.preOrder?.enabled) ||
+        parseBoolean(configDoc?.preOrderEnabled) ||
+        parseBoolean(highDemandDoc?.preOrder?.enabled) ||
+        parseBoolean(highDemandDoc?.preOrderEnabled)
+      );
 
-    const showLowStockBadge = !isExplicitlyDisabled && isLowStockBadgeConfigured;
+    const showLowStockBadge = isGlobalLowStockEnabled && !isExplicitlyDisabled && isLowStockBadgeConfigured;
     const showPreOrder = false;
     const isOverallShown = showLowStockBadge;
 

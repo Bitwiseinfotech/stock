@@ -8,6 +8,20 @@ async function ensureConnected() {
   }
 }
 
+function normalizeShopDomain(rawShop) {
+  if (!rawShop) return "";
+  return String(rawShop).trim().toLowerCase().replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+}
+
+function safeClearStorefrontCache(shop) {
+  try {
+    const { clearStorefrontCache } = require("./storefrontController");
+    if (typeof clearStorefrontCache === "function") {
+      clearStorefrontCache(shop);
+    }
+  } catch (_) {}
+}
+
 const DEFAULT_CONFIG = {
   enabled: true,
   badgeTitle: "Clearance Sale",
@@ -108,12 +122,15 @@ async function getClearanceSaleConfig(req, res) {
   try {
     await ensureConnected();
 
-    const shopId = req.shopId || req.query.shop;
-    if (!shopId) {
+    const rawShop = req.shopId || req.query.shop;
+    if (!rawShop) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
+    const shopId = normalizeShopDomain(rawShop);
 
-    let config = await ClearanceSaleConfig.findOne({ shopId }).lean().catch(() => null);
+    let config = await ClearanceSaleConfig.findOne({
+      $or: [{ shopId }, { shopId: rawShop }, { shopId: new RegExp(`^${shopId}$`, "i") }],
+    }).lean().catch(() => null);
     if (!config) {
       config = await ClearanceSaleConfig.create({ shopId, ...DEFAULT_CONFIG })
         .then((doc) => doc.toObject())
@@ -141,19 +158,23 @@ async function updateClearanceSaleConfig(req, res) {
   try {
     await ensureConnected();
 
-    const shopId = req.shopId || req.query.shop || req.body?.shop;
-    if (!shopId) {
+    const rawShop = req.shopId || req.query.shop || req.body?.shop;
+    if (!rawShop) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
+    const shopId = normalizeShopDomain(rawShop);
 
     const payload = req.body || {};
     const sanitized = sanitizeConfig(payload);
+    sanitized.shopId = shopId;
 
     const updated = await ClearanceSaleConfig.findOneAndUpdate(
-      { shopId },
+      { $or: [{ shopId }, { shopId: rawShop }, { shopId: new RegExp(`^${shopId}$`, "i") }] },
       { $set: sanitized },
       { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
     ).lean();
+
+    safeClearStorefrontCache(shopId);
 
     return res.status(200).json({
       success: true,
@@ -173,16 +194,19 @@ async function resetClearanceSaleConfig(req, res) {
   try {
     await ensureConnected();
 
-    const shopId = req.shopId || req.query.shop || req.body?.shop;
-    if (!shopId) {
+    const rawShop = req.shopId || req.query.shop || req.body?.shop;
+    if (!rawShop) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
+    const shopId = normalizeShopDomain(rawShop);
 
     const updated = await ClearanceSaleConfig.findOneAndUpdate(
-      { shopId },
-      { $set: DEFAULT_CONFIG },
+      { $or: [{ shopId }, { shopId: rawShop }, { shopId: new RegExp(`^${shopId}$`, "i") }] },
+      { $set: { shopId, ...DEFAULT_CONFIG } },
       { upsert: true, returnDocument: "after" }
     ).lean();
+
+    safeClearStorefrontCache(shopId);
 
     return res.status(200).json({
       success: true,
@@ -267,6 +291,8 @@ async function updateBundleConfig(req, res) {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     ).lean();
 
+    safeClearStorefrontCache(cleanShop);
+
     return res.status(200).json({
       success: true,
       message: "Bundle configuration saved successfully!",
@@ -285,13 +311,15 @@ async function resetBundleConfig(req, res) {
     if (!rawShop) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
-    const cleanShop = String(rawShop).replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+    const cleanShop = normalizeShopDomain(rawShop);
 
     const updated = await BundleConfig.findOneAndUpdate(
       { $or: [{ shop: cleanShop }, { shop: rawShop }, { shop: new RegExp(`^${cleanShop}$`, "i") }] },
       { $set: { shop: cleanShop, ...DEFAULT_BUNDLE_CONFIG } },
       { upsert: true, new: true }
     ).lean();
+
+    safeClearStorefrontCache(cleanShop);
 
     return res.status(200).json({
       success: true,
@@ -323,12 +351,15 @@ const DEFAULT_MARKDOWN_CONFIG = {
 async function getMarkdownConfig(req, res) {
   try {
     await ensureConnected();
-    const shopId = req.shopId || req.query.shop || req.body?.shop;
-    if (!shopId) {
+    const rawShop = req.shopId || req.query.shop || req.body?.shop;
+    if (!rawShop) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
+    const shopId = normalizeShopDomain(rawShop);
 
-    const config = await MarkdownConfig.findOne({ shop: shopId }).lean();
+    const config = await MarkdownConfig.findOne({
+      $or: [{ shop: shopId }, { shop: rawShop }, { shop: new RegExp(`^${shopId}$`, "i") }],
+    }).lean();
     return res.status(200).json({
       success: true,
       data: config || { shop: shopId, ...DEFAULT_MARKDOWN_CONFIG },
@@ -342,16 +373,18 @@ async function getMarkdownConfig(req, res) {
 async function updateMarkdownConfig(req, res) {
   try {
     await ensureConnected();
-    const shopId = req.shopId || req.query.shop || req.body?.shop;
-    if (!shopId) {
+    const rawShop = req.shopId || req.query.shop || req.body?.shop;
+    if (!rawShop) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
+    const shopId = normalizeShopDomain(rawShop);
 
     const payload = req.body || {};
     const updated = await MarkdownConfig.findOneAndUpdate(
-      { shop: shopId },
+      { $or: [{ shop: shopId }, { shop: rawShop }, { shop: new RegExp(`^${shopId}$`, "i") }] },
       {
         $set: {
+          shop: shopId,
           enabled: typeof payload.enabled === "boolean" ? payload.enabled : true,
           badgeText: payload.badgeText || DEFAULT_MARKDOWN_CONFIG.badgeText,
           showStrikethroughPrice: typeof payload.showStrikethroughPrice === "boolean" ? payload.showStrikethroughPrice : true,
@@ -374,14 +407,14 @@ async function updateMarkdownConfig(req, res) {
       : (orig, disc) => Math.max(0, Number((Number(orig || 0) * (1 - Number(disc || 0) / 100)).toFixed(2)));
 
     const store = await Store.findOne({
-      $or: [{ shop: shopId }, { shop: String(shopId).replace(/^https?:\/\//i, "") }],
+      $or: [{ shop: shopId }, { shop: rawShop }, { shop: new RegExp(`^${shopId}$`, "i") }],
     }).lean();
     const accessToken = store?.accessToken;
 
     if (accessToken) {
       if (payload.enabled === true) {
         // Re-apply markdown discounted price on Shopify for rules
-        const rules = await MarkdownRule.find({ shop: shopId }).lean();
+        const rules = await MarkdownRule.find({ $or: [{ shop: shopId }, { shop: rawShop }] }).lean();
         for (const rule of rules) {
           if (rule.originalPrice && rule.currentDiscount > 0) {
             const discountedPrice = calculateMarkdownPrice(rule.originalPrice, rule.currentDiscount);
@@ -402,7 +435,7 @@ async function updateMarkdownConfig(req, res) {
         }
       } else if (payload.enabled === false) {
         // Restore original prices and clear compareAtPrice on Shopify
-        const rules = await MarkdownRule.find({ shop: shopId }).lean();
+        const rules = await MarkdownRule.find({ $or: [{ shop: shopId }, { shop: rawShop }] }).lean();
         for (const rule of rules) {
           if (rule.originalPrice) {
             await updateShopifyVariantPrice({
@@ -423,6 +456,8 @@ async function updateMarkdownConfig(req, res) {
       }
     }
 
+    safeClearStorefrontCache(shopId);
+
     return res.status(200).json({
       success: true,
       message: "Progressive Markdown configuration saved successfully!",
@@ -437,16 +472,19 @@ async function updateMarkdownConfig(req, res) {
 async function resetMarkdownConfig(req, res) {
   try {
     await ensureConnected();
-    const shopId = req.shopId || req.query.shop || req.body?.shop;
-    if (!shopId) {
+    const rawShop = req.shopId || req.query.shop || req.body?.shop;
+    if (!rawShop) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
+    const shopId = normalizeShopDomain(rawShop);
 
     const updated = await MarkdownConfig.findOneAndUpdate(
-      { shop: shopId },
-      { $set: DEFAULT_MARKDOWN_CONFIG },
+      { $or: [{ shop: shopId }, { shop: rawShop }, { shop: new RegExp(`^${shopId}$`, "i") }] },
+      { $set: { shop: shopId, ...DEFAULT_MARKDOWN_CONFIG } },
       { upsert: true, returnDocument: "after" }
     ).lean();
+
+    safeClearStorefrontCache(shopId);
 
     return res.status(200).json({
       success: true,
@@ -487,12 +525,15 @@ const DEFAULT_LOW_STOCK_CONFIG = {
 async function getLowStockConfig(req, res) {
   try {
     await ensureConnected();
-    const shopId = req.shopId || req.query.shop || req.body?.shop;
-    if (!shopId) {
+    const rawShop = req.shopId || req.query.shop || req.body?.shop;
+    if (!rawShop) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
+    const shopId = normalizeShopDomain(rawShop);
 
-    const config = await LowStockBadgeConfig.findOne({ shop: shopId }).lean();
+    const config = await LowStockBadgeConfig.findOne({
+      $or: [{ shop: shopId }, { shop: rawShop }, { shop: new RegExp(`^${shopId}$`, "i") }],
+    }).lean();
     return res.status(200).json({
       success: true,
       data: config || { shop: shopId, ...DEFAULT_LOW_STOCK_CONFIG },
@@ -506,16 +547,18 @@ async function getLowStockConfig(req, res) {
 async function updateLowStockConfig(req, res) {
   try {
     await ensureConnected();
-    const shopId = req.shopId || req.query.shop || req.body?.shop;
-    if (!shopId) {
+    const rawShop = req.shopId || req.query.shop || req.body?.shop;
+    if (!rawShop) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
+    const shopId = normalizeShopDomain(rawShop);
 
     const payload = req.body || {};
     const updated = await LowStockBadgeConfig.findOneAndUpdate(
-      { shop: shopId },
+      { $or: [{ shop: shopId }, { shop: rawShop }, { shop: new RegExp(`^${shopId}$`, "i") }] },
       {
         $set: {
+          shop: shopId,
           enabled: typeof payload.enabled === "boolean" ? payload.enabled : true,
           badgeText: payload.badgeText !== undefined ? payload.badgeText : DEFAULT_LOW_STOCK_CONFIG.badgeText,
           almostSoldOutText: payload.almostSoldOutText !== undefined ? payload.almostSoldOutText : DEFAULT_LOW_STOCK_CONFIG.almostSoldOutText,
@@ -538,6 +581,8 @@ async function updateLowStockConfig(req, res) {
       { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
     ).lean();
 
+    safeClearStorefrontCache(shopId);
+
     return res.status(200).json({
       success: true,
       message: "Low Stock Badge configuration saved successfully!",
@@ -552,16 +597,19 @@ async function updateLowStockConfig(req, res) {
 async function resetLowStockConfig(req, res) {
   try {
     await ensureConnected();
-    const shopId = req.shopId || req.query.shop || req.body?.shop;
-    if (!shopId) {
+    const rawShop = req.shopId || req.query.shop || req.body?.shop;
+    if (!rawShop) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
+    const shopId = normalizeShopDomain(rawShop);
 
     const updated = await LowStockBadgeConfig.findOneAndUpdate(
-      { shop: shopId },
-      { $set: DEFAULT_LOW_STOCK_CONFIG },
+      { $or: [{ shop: shopId }, { shop: rawShop }, { shop: new RegExp(`^${shopId}$`, "i") }] },
+      { $set: { shop: shopId, ...DEFAULT_LOW_STOCK_CONFIG } },
       { upsert: true, returnDocument: "after" }
     ).lean();
+
+    safeClearStorefrontCache(shopId);
 
     return res.status(200).json({
       success: true,
@@ -596,12 +644,15 @@ const DEFAULT_PRE_ORDER_CONFIG = {
 async function getPreOrderCustomizationConfig(req, res) {
   try {
     await ensureConnected();
-    const shopId = req.shopId || req.query.shop || req.body?.shop;
-    if (!shopId) {
+    const rawShop = req.shopId || req.query.shop || req.body?.shop;
+    if (!rawShop) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
+    const shopId = normalizeShopDomain(rawShop);
 
-    const config = await PreOrderConfig.findOne({ shop: shopId }).lean();
+    const config = await PreOrderConfig.findOne({
+      $or: [{ shop: shopId }, { shop: rawShop }, { shop: new RegExp(`^${shopId}$`, "i") }],
+    }).lean();
     return res.status(200).json({
       success: true,
       data: config || { shop: shopId, ...DEFAULT_PRE_ORDER_CONFIG },
@@ -615,16 +666,18 @@ async function getPreOrderCustomizationConfig(req, res) {
 async function updatePreOrderCustomizationConfig(req, res) {
   try {
     await ensureConnected();
-    const shopId = req.shopId || req.query.shop || req.body?.shop;
-    if (!shopId) {
+    const rawShop = req.shopId || req.query.shop || req.body?.shop;
+    if (!rawShop) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
+    const shopId = normalizeShopDomain(rawShop);
 
     const payload = req.body || {};
     const updated = await PreOrderConfig.findOneAndUpdate(
-      { shop: shopId },
+      { $or: [{ shop: shopId }, { shop: rawShop }, { shop: new RegExp(`^${shopId}$`, "i") }] },
       {
         $set: {
+          shop: shopId,
           enabled: typeof payload.enabled === "boolean" ? payload.enabled : true,
           buttonText: payload.buttonText || DEFAULT_PRE_ORDER_CONFIG.buttonText,
           badgeText: payload.badgeText || DEFAULT_PRE_ORDER_CONFIG.badgeText,
@@ -641,6 +694,8 @@ async function updatePreOrderCustomizationConfig(req, res) {
       { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
     ).lean();
 
+    safeClearStorefrontCache(shopId);
+
     return res.status(200).json({
       success: true,
       message: "Pre-Order styling configuration saved successfully!",
@@ -655,16 +710,19 @@ async function updatePreOrderCustomizationConfig(req, res) {
 async function resetPreOrderCustomizationConfig(req, res) {
   try {
     await ensureConnected();
-    const shopId = req.shopId || req.query.shop || req.body?.shop;
-    if (!shopId) {
+    const rawShop = req.shopId || req.query.shop || req.body?.shop;
+    if (!rawShop) {
       return res.status(400).json({ success: false, message: "Missing shop parameter." });
     }
+    const shopId = normalizeShopDomain(rawShop);
 
     const updated = await PreOrderConfig.findOneAndUpdate(
-      { shop: shopId },
-      { $set: DEFAULT_PRE_ORDER_CONFIG },
+      { $or: [{ shop: shopId }, { shop: rawShop }, { shop: new RegExp(`^${shopId}$`, "i") }] },
+      { $set: { shop: shopId, ...DEFAULT_PRE_ORDER_CONFIG } },
       { upsert: true, returnDocument: "after" }
     ).lean();
+
+    safeClearStorefrontCache(shopId);
 
     return res.status(200).json({
       success: true,

@@ -34,6 +34,14 @@ import {
 } from "../../services/appApi";
 
 export default function CustomizationIndex({ shopDomain = "", initialConfig = null }) {
+  const effectiveShop =
+    shopDomain ||
+    (typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("shop") ||
+        localStorage.getItem("smart_stock_shop") ||
+        ""
+      : "");
+
   const [config, setConfig] = useState(
     initialConfig || {
       enabled: true,
@@ -98,9 +106,12 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
       const cached = localStorage.getItem("smart_stock_user_plan");
       if (cached) setCurrentPlan(cached.toLowerCase());
     }
-    if (shopDomain) {
+    if (effectiveShop) {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("smart_stock_shop", effectiveShop);
+      }
       setLoading(true);
-      fetchSubscription(shopDomain)
+      fetchSubscription(effectiveShop)
         .then((data) => {
           if (data?.subscription?.plan) {
             const plan = data.subscription.plan.toLowerCase();
@@ -113,11 +124,11 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
         .catch(() => null);
 
       Promise.all([
-        !initialConfig ? fetchClearanceSaleConfigApi(shopDomain).catch(() => null) : Promise.resolve(initialConfig),
-        fetchBundleConfigApi(shopDomain).catch(() => null),
-        fetchMarkdownConfigApi(shopDomain).catch(() => null),
-        fetchLowStockConfigApi(shopDomain).catch(() => null),
-        fetchPreOrderConfigApi(shopDomain).catch(() => null),
+        !initialConfig ? fetchClearanceSaleConfigApi(effectiveShop).catch(() => null) : Promise.resolve(initialConfig),
+        fetchBundleConfigApi(effectiveShop).catch(() => null),
+        fetchMarkdownConfigApi(effectiveShop).catch(() => null),
+        fetchLowStockConfigApi(effectiveShop).catch(() => null),
+        fetchPreOrderConfigApi(effectiveShop).catch(() => null),
       ])
         .then(([saleData, bData, mData, lsData, poData]) => {
           if (saleData) setConfig(saleData);
@@ -128,13 +139,13 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
         })
         .finally(() => setLoading(false));
     }
-  }, [shopDomain, initialConfig]);
+  }, [effectiveShop, initialConfig]);
 
   const handleToggleStatus = async () => {
     const nextState = !config.enabled;
     setToggling(true);
     try {
-      const updated = await saveClearanceSaleConfigApi(shopDomain, {
+      const updated = await saveClearanceSaleConfigApi(effectiveShop, {
         ...config,
         enabled: nextState,
       });
@@ -163,7 +174,7 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
     const nextState = !bundleConfig.enabled;
     setTogglingBundle(true);
     try {
-      const updated = await saveBundleConfigApi(shopDomain, {
+      const updated = await saveBundleConfigApi(effectiveShop, {
         ...bundleConfig,
         enabled: nextState,
       });
@@ -192,7 +203,7 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
     const nextState = !markdownConfig.enabled;
     setTogglingMarkdown(true);
     try {
-      const updated = await saveMarkdownConfigApi(shopDomain, {
+      const updated = await saveMarkdownConfigApi(effectiveShop, {
         ...markdownConfig,
         enabled: nextState,
       });
@@ -221,7 +232,7 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
     const nextState = !lowStockConfig.enabled;
     setTogglingLowStock(true);
     try {
-      const updated = await saveLowStockConfigApi(shopDomain, {
+      const updated = await saveLowStockConfigApi(effectiveShop, {
         ...lowStockConfig,
         enabled: nextState,
       });
@@ -250,7 +261,7 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
     const nextState = !preOrderConfig.enabled;
     setTogglingPreOrder(true);
     try {
-      const updated = await savePreOrderConfigApi(shopDomain, {
+      const updated = await savePreOrderConfigApi(effectiveShop, {
         ...preOrderConfig,
         enabled: nextState,
       });
@@ -275,8 +286,8 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
     }
   };
 
-  const themeEditorUrl = shopDomain
-    ? `https://${shopDomain}/admin/themes/current/editor?context=apps`
+  const themeEditorUrl = effectiveShop
+    ? `https://${effectiveShop}/admin/themes/current/editor?context=apps`
     : "#";
 
   return (
@@ -679,7 +690,7 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
       <ClearanceSaleCustomizeModal
         open={customizeSaleOpen}
         onClose={() => setCustomizeSaleOpen(false)}
-        shop={shopDomain}
+        shop={effectiveShop}
         onSaved={(data) => {
           if (data) setConfig(data);
         }}
@@ -688,7 +699,7 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
       <BundleCustomizeModal
         open={customizeBundleOpen}
         onClose={() => setCustomizeBundleOpen(false)}
-        shop={shopDomain}
+        shop={effectiveShop}
         onSaved={(data) => {
           if (data) setBundleConfig(data);
         }}
@@ -697,7 +708,7 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
       <MarkdownCustomizeModal
         open={customizeMarkdownOpen}
         onClose={() => setCustomizeMarkdownOpen(false)}
-        shop={shopDomain}
+        shop={effectiveShop}
         onSaved={(data) => {
           if (data) setMarkdownConfig(data);
         }}
@@ -706,7 +717,7 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
       <LowStockCustomizeModal
         open={customizeLowStockOpen}
         onClose={() => setCustomizeLowStockOpen(false)}
-        shop={shopDomain}
+        shop={effectiveShop}
         onSaved={(data) => {
           if (data) setLowStockConfig(data);
         }}
@@ -715,7 +726,7 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
       <PreOrderCustomizeModal
         open={customizePreOrderOpen}
         onClose={() => setCustomizePreOrderOpen(false)}
-        shop={shopDomain}
+        shop={effectiveShop}
         onSaved={(data) => {
           if (data) setPreOrderConfig(data);
         }}

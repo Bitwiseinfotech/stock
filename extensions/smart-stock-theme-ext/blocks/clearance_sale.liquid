@@ -731,11 +731,7 @@
      * Feature disabled
      */
 
-    if (
-      config &&
-      config.enabled === false &&
-      (!sale || !sale.hasClearance)
-    ) {
+    if (config && config.enabled === false) {
       removeRenderedClearance();
       return;
     }

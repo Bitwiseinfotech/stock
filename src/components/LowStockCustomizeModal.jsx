@@ -348,6 +348,13 @@ export default function LowStockCustomizeModal({
 
           {/* BADGE CONTENT CONTROLS */}
           <FormLayout>
+            <Checkbox
+              label="Enable Low Stock Badge on storefront"
+              helpText="When disabled, the low stock urgency badge is completely hidden on your storefront."
+              checked={settings.enabled !== false}
+              onChange={(checked) => setSettings({ ...settings, enabled: checked })}
+            />
+
             <Text variant="headingSm" as="h4">
               Badge Content & Messages
             </Text>

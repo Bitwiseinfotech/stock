@@ -53,6 +53,14 @@ const DEFAULT_CONFIG = {
 export default function ClearanceSaleCustomization({ shopDomain = "", initialConfig = null }) {
   const navigate = useNavigate();
 
+  const effectiveShop =
+    shopDomain ||
+    (typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("shop") ||
+        localStorage.getItem("smart_stock_shop") ||
+        ""
+      : "");
+
   const [savedConfig, setSavedConfig] = useState(initialConfig || DEFAULT_CONFIG);
   const [formState, setFormState] = useState(initialConfig || DEFAULT_CONFIG);
   const [loading, setLoading] = useState(false);
@@ -62,9 +70,12 @@ export default function ClearanceSaleCustomization({ shopDomain = "", initialCon
   const [bannerMessage, setBannerMessage] = useState(null);
 
   useEffect(() => {
-    if (!initialConfig && shopDomain) {
+    if (!initialConfig && effectiveShop) {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("smart_stock_shop", effectiveShop);
+      }
       setLoading(true);
-      fetchClearanceSaleConfigApi(shopDomain)
+      fetchClearanceSaleConfigApi(effectiveShop)
         .then((data) => {
           if (data) {
             setSavedConfig(data);
@@ -76,7 +87,7 @@ export default function ClearanceSaleCustomization({ shopDomain = "", initialCon
         })
         .finally(() => setLoading(false));
     }
-  }, [shopDomain, initialConfig]);
+  }, [effectiveShop, initialConfig]);
 
   const isDirty = useMemo(() => {
     return JSON.stringify(formState) !== JSON.stringify(savedConfig);
@@ -112,7 +123,7 @@ export default function ClearanceSaleCustomization({ shopDomain = "", initialCon
         supportingText: formState.limitedTimeText ?? formState.supportingText ?? "Limited time offer",
       };
 
-      const res = await saveClearanceSaleConfigApi(shopDomain, payload);
+      const res = await saveClearanceSaleConfigApi(effectiveShop, payload);
       const persisted = res?.data || payload;
       const normalized = {
         ...DEFAULT_CONFIG,
@@ -140,7 +151,7 @@ export default function ClearanceSaleCustomization({ shopDomain = "", initialCon
   const handleConfirmReset = async () => {
     setResetting(true);
     try {
-      const res = await resetClearanceSaleConfigApi(shopDomain);
+      const res = await resetClearanceSaleConfigApi(effectiveShop);
       const resetData = res?.data || DEFAULT_CONFIG;
       setSavedConfig(resetData);
       setFormState(resetData);
@@ -159,7 +170,7 @@ export default function ClearanceSaleCustomization({ shopDomain = "", initialCon
     }
   };
 
-  const storefrontUrl = shopDomain ? `https://${shopDomain}` : null;
+  const storefrontUrl = effectiveShop ? `https://${effectiveShop}` : null;
 
   return (
     <Page
@@ -217,6 +228,13 @@ export default function ClearanceSaleCustomization({ shopDomain = "", initialCon
               <BlockStack gap="400">
                 <Text variant="headingSm" as="h3">Content & Text</Text>
                 <FormLayout>
+                  <Checkbox
+                    label="Enable Clearance Sale component on storefront"
+                    helpText="When disabled, clearance sale banners and badges are hidden across the entire storefront."
+                    checked={formState.enabled !== false}
+                    onChange={(val) => handleChange("enabled", val)}
+                  />
+
                   <TextField
                     label="Badge title"
                     value={formState.badgeTitle}

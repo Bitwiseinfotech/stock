@@ -94,12 +94,22 @@ async function getHighDemandStorefrontStatus(req, res) {
       console.warn("[HighDemandStorefront] Could not fetch real-time inventory:", stockErr.message);
     }
 
-    const stock = currentStock !== null ? currentStock : 0;
-    const isUrgencyConfigured = Boolean(config?.urgencyBadgeEnabled);
-    const isPreOrderConfigured = Boolean(config?.preOrderEnabled);
+    const LowStockBadgeConfig = require("../models/LowStockBadgeConfig");
+    const PreOrderConfig = require("../models/PreOrderConfig");
+    const [globalLowStockConfig, globalPreOrderConfig] = await Promise.all([
+      LowStockBadgeConfig.findOne({
+        $or: [{ shop }, { shop: new RegExp(`^${shop}$`, "i") }],
+      }).lean().catch(() => null),
+      PreOrderConfig.findOne({
+        $or: [{ shop }, { shop: new RegExp(`^${shop}$`, "i") }],
+      }).lean().catch(() => null),
+    ]);
 
-    const showUrgencyBadge = isUrgencyConfigured;
-    const showPreOrder = isPreOrderConfigured && stock <= 0;
+    const isGlobalLowStockEnabled = globalLowStockConfig ? Boolean(globalLowStockConfig.enabled) : true;
+    const isGlobalPreOrderEnabled = globalPreOrderConfig ? Boolean(globalPreOrderConfig.enabled) : true;
+
+    const showUrgencyBadge = isGlobalLowStockEnabled && isUrgencyConfigured;
+    const showPreOrder = isGlobalPreOrderEnabled && isPreOrderConfigured && stock <= 0;
     const isOverallEnabled = showUrgencyBadge || showPreOrder;
 
     const rawBadgeText = config?.badgeText || "Only {stock} left in stock!";
