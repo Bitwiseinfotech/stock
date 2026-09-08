@@ -47,8 +47,13 @@ const ICON_PRESETS = [
   { label: "⏳ Hourglass", value: "⏳" },
   { label: "🏷️ Tag", value: "🏷️" },
   { label: "📦 Box", value: "📦" },
-  { label: "None / Custom", value: "custom" },
+  { label: "Custom Emoji", value: "custom" },
 ];
+
+function stripEmojiPrefix(text) {
+  if (!text) return "";
+  return text.replace(/^[\s\p{Extended_Pictographic}\uFE0F\u200D\u2600-\u26FF\u2700-\u27BF]+/u, "").trim();
+}
 
 function ColorPickerField({ label, value, onChange }) {
   const safeHex = /^#(?:[0-9a-fA-F]{3}){1,2}$/.test(value || "") ? value : "#000000";
@@ -162,9 +167,16 @@ export default function LowStockCustomizeModal({
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await saveLowStockConfigApi(shop, settings);
+      const cleanBadgeText = stripEmojiPrefix(settings.badgeText);
+      const cleanAlmostSoldOutText = stripEmojiPrefix(settings.almostSoldOutText);
+      const payloadToSave = {
+        ...settings,
+        badgeText: cleanBadgeText || "Only {stock} left in stock!",
+        almostSoldOutText: cleanAlmostSoldOutText || "High Demand — Almost Sold Out!",
+      };
+      const res = await saveLowStockConfigApi(shop, payloadToSave);
       setToastMessage({ tone: "success", text: "Low Stock Badge customization saved!" });
-      onSaved(res.data || settings);
+      onSaved(res.data || payloadToSave);
       setTimeout(() => {
         onClose();
       }, 500);
@@ -210,14 +222,10 @@ export default function LowStockCustomizeModal({
   }
 
   // Strip leading emoji if showIcon is false, or prepend icon if configured
-  let previewDisplay = baseMsg;
-  if (!settings.showIcon) {
-    previewDisplay = baseMsg.replace(/^[\s\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}]+/u, "").trim();
-  } else if (settings.icon && settings.icon !== "none") {
-    const hasEmojiPrefix = /^[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}]/u.test(baseMsg.trim());
-    if (!hasEmojiPrefix) {
-      previewDisplay = `${settings.icon} ${baseMsg.trim()}`;
-    }
+  const cleanBaseMsg = stripEmojiPrefix(baseMsg);
+  let previewDisplay = cleanBaseMsg;
+  if (settings.showIcon && settings.icon && settings.icon !== "none") {
+    previewDisplay = `${settings.icon} ${cleanBaseMsg}`;
   }
 
   return (

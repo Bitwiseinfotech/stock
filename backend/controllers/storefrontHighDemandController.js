@@ -278,10 +278,12 @@ async function getHighDemandStorefrontWidget(req, res) {
     let badgeSubtext = "";
 
     if (showLowStockBadge) {
-      const templateText = configDoc?.badgeText || globalLowStockConfig?.badgeText || "🔥 Only {stock} left in stock!";
-      const depletedText = globalLowStockConfig?.almostSoldOutText || configDoc?.almostSoldOutText || "🔥 High Demand — Almost Sold Out!";
+      const templateText = globalLowStockConfig?.badgeText || configDoc?.badgeText || "Only {stock} left in stock!";
+      const depletedText = globalLowStockConfig?.almostSoldOutText || configDoc?.almostSoldOutText || "High Demand — Almost Sold Out!";
       const showIcon = globalLowStockConfig?.showIcon !== false;
-      const configuredIcon = globalLowStockConfig?.icon !== undefined ? globalLowStockConfig.icon : "🔥";
+      const configuredIcon = globalLowStockConfig?.icon !== undefined && globalLowStockConfig?.icon !== "none"
+        ? globalLowStockConfig.icon
+        : "";
       const showSubtext = globalLowStockConfig?.showSubtext !== false;
 
       let baseText = "";
@@ -297,16 +299,16 @@ async function getHighDemandStorefrontWidget(req, res) {
         }
       }
 
+      // Strip any existing leading emoji from baseText first
+      const cleanBaseText = String(baseText || "")
+        .replace(/^[\s\p{Extended_Pictographic}\uFE0F\u200D\u2600-\u26FF\u2700-\u27BF]+/u, "")
+        .trim();
+
       // Handle icon
-      if (!showIcon) {
-        badgeMessage = baseText.replace(/^[\s\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}]+/u, "").trim();
+      if (!showIcon || !configuredIcon) {
+        badgeMessage = cleanBaseText;
       } else {
-        const hasEmojiPrefix = /^[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}]/u.test(baseText.trim());
-        if (!hasEmojiPrefix && configuredIcon && configuredIcon !== "none") {
-          badgeMessage = `${configuredIcon} ${baseText.trim()}`;
-        } else {
-          badgeMessage = baseText.trim();
-        }
+        badgeMessage = `${configuredIcon} ${cleanBaseText}`;
       }
 
       if (!showSubtext) {
@@ -351,7 +353,7 @@ async function getHighDemandStorefrontWidget(req, res) {
         subtext: badgeSubtext,
         showSubtext: globalLowStockConfig?.showSubtext !== false,
         showIcon: globalLowStockConfig?.showIcon !== false,
-        icon: globalLowStockConfig?.icon || "🔥",
+        icon: (globalLowStockConfig?.icon !== undefined && globalLowStockConfig?.icon !== "none") ? globalLowStockConfig.icon : "",
         backgroundColor: globalLowStockConfig?.backgroundColor || configDoc?.badgeBackgroundColor || "#FFF1F2",
         borderColor: globalLowStockConfig?.borderColor || "#FECDD3",
         textColor: globalLowStockConfig?.textColor || configDoc?.badgeColor || "#991B1B",

@@ -112,11 +112,22 @@ async function getHighDemandStorefrontStatus(req, res) {
     const showPreOrder = isGlobalPreOrderEnabled && isPreOrderConfigured && stock <= 0;
     const isOverallEnabled = showUrgencyBadge || showPreOrder;
 
-    const rawBadgeText = config?.badgeText || "Only {stock} left in stock!";
-    const depletedText = config?.almostSoldOutText || "High Demand — Almost Sold Out!";
-    const formattedBadgeText = stock > 0
-      ? rawBadgeText.replace("{stock}", String(stock))
-      : (depletedText || rawBadgeText.replace("{stock}", "0"));
+    const showIcon = globalLowStockConfig?.showIcon !== false;
+    const configuredIcon = (globalLowStockConfig?.icon && globalLowStockConfig?.icon !== "none") ? globalLowStockConfig.icon : "";
+    const rawBadgeText = globalLowStockConfig?.badgeText || config?.badgeText || "Only {stock} left in stock!";
+    const depletedText = globalLowStockConfig?.almostSoldOutText || config?.almostSoldOutText || "High Demand — Almost Sold Out!";
+    const baseText = stock > 0
+      ? rawBadgeText.replace(/\{stock\}/gi, String(stock))
+      : (depletedText || rawBadgeText.replace(/\{stock\}/gi, "0"));
+
+    const cleanBaseText = String(baseText || "")
+      .replace(/^[\s\p{Extended_Pictographic}\uFE0F\u200D\u2600-\u26FF\u2700-\u27BF]+/u, "")
+      .trim();
+
+    let formattedBadgeText = cleanBaseText;
+    if (showIcon && configuredIcon) {
+      formattedBadgeText = `${configuredIcon} ${cleanBaseText}`;
+    }
 
     return res.status(200).json({
       success: true,
@@ -126,8 +137,10 @@ async function getHighDemandStorefrontStatus(req, res) {
         preOrderEnabled: showPreOrder,
         currentStock: stock,
         badgeText: formattedBadgeText,
-        badgeColor: config?.badgeColor || "#991B1B",
-        badgeBackgroundColor: config?.badgeBackgroundColor || "#FFF1F2",
+        badgeColor: globalLowStockConfig?.textColor || config?.badgeColor || "#991B1B",
+        badgeBackgroundColor: globalLowStockConfig?.backgroundColor || config?.badgeBackgroundColor || "#FFF1F2",
+        icon: configuredIcon,
+        showIcon: showIcon,
         preOrderText: config?.preOrderText || "Pre-Order Now",
         variantId,
         shop,

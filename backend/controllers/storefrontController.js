@@ -514,13 +514,60 @@ async function getProductWidgetData(req, res) {
       urgencyBadge: {
         enabled: Boolean(isGlobalLowStockEnabled && (isUrgencyShowing || (isSmartLowStock && stock > 0))),
         show: Boolean(isGlobalLowStockEnabled && (isUrgencyShowing || (isSmartLowStock && stock > 0))),
-        text: (isGlobalLowStockEnabled && stock > 0) ? (storefrontSetting?.badgeText || `🔥 Only ${stock} left in stock!`).replace(/\{stock\}/gi, String(stock)) : "",
+        text: (() => {
+          if (!isGlobalLowStockEnabled || stock <= 0) return "";
+          const showIcon = globalLowStockConfig?.showIcon !== false;
+          const configuredIcon = (globalLowStockConfig?.icon && globalLowStockConfig?.icon !== "none") ? globalLowStockConfig.icon : "";
+          const rawText = (globalLowStockConfig?.badgeText || storefrontSetting?.badgeText || "Only {stock} left in stock!").replace(/\{stock\}/gi, String(stock));
+          const cleanText = rawText.replace(/^[\s\p{Extended_Pictographic}\uFE0F\u200D\u2600-\u26FF\u2700-\u27BF]+/u, "").trim();
+          return (showIcon && configuredIcon) ? `${configuredIcon} ${cleanText}` : cleanText;
+        })(),
+        icon: (globalLowStockConfig?.icon && globalLowStockConfig?.icon !== "none") ? globalLowStockConfig.icon : "",
+        showIcon: globalLowStockConfig?.showIcon !== false,
+        backgroundColor: globalLowStockConfig?.backgroundColor || "#FFF1F2",
+        borderColor: globalLowStockConfig?.borderColor || "#FECDD3",
+        textColor: globalLowStockConfig?.textColor || "#991B1B",
+        borderRadius: globalLowStockConfig?.borderRadius ?? 8,
+      },
+      lowStockBadge: {
+        enabled: Boolean(isGlobalLowStockEnabled && (isUrgencyShowing || (isSmartLowStock && stock > 0))),
+        show: Boolean(isGlobalLowStockEnabled && (isUrgencyShowing || (isSmartLowStock && stock > 0))),
+        threshold: Number(globalLowStockConfig?.threshold || 5),
+        showDaysRemaining: globalLowStockConfig?.showDaysRemaining !== false,
+        message: (() => {
+          const showIcon = globalLowStockConfig?.showIcon !== false;
+          const configuredIcon = (globalLowStockConfig?.icon && globalLowStockConfig?.icon !== "none") ? globalLowStockConfig.icon : "";
+          const rawText = stock > 0
+            ? (globalLowStockConfig?.badgeText || storefrontSetting?.badgeText || "Only {stock} left in stock!").replace(/\{stock\}/gi, String(stock))
+            : (globalLowStockConfig?.almostSoldOutText || "High Demand — Almost Sold Out!");
+          const cleanText = rawText.replace(/^[\s\p{Extended_Pictographic}\uFE0F\u200D\u2600-\u26FF\u2700-\u27BF]+/u, "").trim();
+          return (showIcon && configuredIcon) ? `${configuredIcon} ${cleanText}` : cleanText;
+        })(),
+        subtext: globalLowStockConfig?.subtext || "Selling fast – high demand detected.",
+        showSubtext: globalLowStockConfig?.showSubtext !== false,
+        showIcon: globalLowStockConfig?.showIcon !== false,
+        icon: (globalLowStockConfig?.icon && globalLowStockConfig?.icon !== "none") ? globalLowStockConfig.icon : "",
+        backgroundColor: globalLowStockConfig?.backgroundColor || "#FFF1F2",
+        borderColor: globalLowStockConfig?.borderColor || "#FECDD3",
+        textColor: globalLowStockConfig?.textColor || "#991B1B",
+        subtextColor: globalLowStockConfig?.subtextColor || "#B91C1C",
+        borderRadius: globalLowStockConfig?.borderRadius ?? 8,
+        fontSize: globalLowStockConfig?.fontSize || 15,
+        padding: globalLowStockConfig?.padding || 12,
+        pulseAnimation: globalLowStockConfig?.pulseAnimation !== false,
       },
       preOrder: {
         enabled: Boolean(isGlobalPreOrderEnabled && isPreOrderActive),
-        buttonText: activeLaunchPreOrder?.buttonText || "🛒 Pre-Order Now",
-        badgeText: activeLaunchPreOrder?.badgeText || "🛒 PRE-ORDER",
-        launchLabel: activeLaunchPreOrder?.launchLabel || "NEW LAUNCH",
+        buttonText: activeLaunchPreOrder?.buttonText || globalPreOrderConfig?.buttonText || "🛒 Pre-Order Now",
+        badgeText: activeLaunchPreOrder?.badgeText || globalPreOrderConfig?.badgeText || "🛒 PRE-ORDER",
+        launchLabel: activeLaunchPreOrder?.launchLabel || globalPreOrderConfig?.launchLabel || "NEW LAUNCH",
+        cardBackgroundColor: globalPreOrderConfig?.cardBackgroundColor || "#FFFFFF",
+        borderColor: globalPreOrderConfig?.borderColor || "#E2E8F0",
+        textColor: globalPreOrderConfig?.textColor || "#111827",
+        accentColor: globalPreOrderConfig?.accentColor || "#4F46E5",
+        badgeBackgroundColor: globalPreOrderConfig?.badgeBackgroundColor || "#0F172A",
+        badgeTextColor: globalPreOrderConfig?.badgeTextColor || "#FFFFFF",
+        borderRadius: globalPreOrderConfig?.borderRadius ?? 12,
       },
       backInStock: {
         enabled: isNotifyMeShowing,
