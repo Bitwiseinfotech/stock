@@ -3,6 +3,7 @@ import {
   Modal,
   FormLayout,
   TextField,
+  Select,
   Checkbox,
   BlockStack,
   InlineStack,
@@ -10,6 +11,8 @@ import {
   Divider,
   Box,
   Banner,
+  ButtonGroup,
+  Button,
 } from "@shopify/polaris";
 import {
   fetchLowStockConfigApi,
@@ -19,17 +22,33 @@ import {
 
 const DEFAULT_LOW_STOCK_SETTINGS = {
   enabled: true,
-  badgeText: "🔥 Only {stock} left in stock!",
+  badgeText: "Only {stock} left in stock!",
+  almostSoldOutText: "High Demand — Almost Sold Out!",
+  showIcon: true,
+  icon: "🔥",
+  showSubtext: true,
   subtext: "Selling fast – high demand detected.",
-  threshold: 5,
+  threshold: 6,
   showDaysRemaining: true,
   backgroundColor: "#FFF1F2",
   borderColor: "#FECDD3",
   textColor: "#991B1B",
   subtextColor: "#B91C1C",
   borderRadius: 8,
+  fontSize: 15,
+  padding: 12,
   pulseAnimation: true,
 };
+
+const ICON_PRESETS = [
+  { label: "🔥 Flame", value: "🔥" },
+  { label: "⚡ Lightning", value: "⚡" },
+  { label: "⚠️ Warning", value: "⚠️" },
+  { label: "⏳ Hourglass", value: "⏳" },
+  { label: "🏷️ Tag", value: "🏷️" },
+  { label: "📦 Box", value: "📦" },
+  { label: "None / Custom", value: "custom" },
+];
 
 function ColorPickerField({ label, value, onChange }) {
   const safeHex = /^#(?:[0-9a-fA-F]{3}){1,2}$/.test(value || "") ? value : "#000000";
@@ -115,6 +134,8 @@ export default function LowStockCustomizeModal({
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
+  const [previewState, setPreviewState] = useState("in_stock"); // 'in_stock' | 'depleted'
+  const [iconMode, setIconMode] = useState("🔥");
 
   useEffect(() => {
     if (open && shop) {
@@ -122,10 +143,13 @@ export default function LowStockCustomizeModal({
       fetchLowStockConfigApi(shop)
         .then((data) => {
           if (data) {
-            setSettings({
+            const merged = {
               ...DEFAULT_LOW_STOCK_SETTINGS,
               ...data,
-            });
+            };
+            setSettings(merged);
+            const foundPreset = ICON_PRESETS.find((p) => p.value === merged.icon);
+            setIconMode(foundPreset ? foundPreset.value : "custom");
           }
         })
         .catch((err) => {
@@ -157,8 +181,9 @@ export default function LowStockCustomizeModal({
   const handleReset = async () => {
     setResetting(true);
     try {
-      const res = await resetLowStockConfigApi(shop);
+      await resetLowStockConfigApi(shop);
       setSettings(DEFAULT_LOW_STOCK_SETTINGS);
+      setIconMode("🔥");
       setToastMessage({
         tone: "success",
         text: "Reset to default settings!",
@@ -176,10 +201,24 @@ export default function LowStockCustomizeModal({
 
   if (!open) return null;
 
-  const previewMainText = (settings.badgeText || "🔥 Only {stock} left in stock!").replace(
-    /\{stock\}/gi,
-    "4"
-  );
+  // Compute preview message
+  let baseMsg = "";
+  if (previewState === "in_stock") {
+    baseMsg = (settings.badgeText || "Only {stock} left in stock!").replace(/\{stock\}/gi, "4");
+  } else {
+    baseMsg = (settings.almostSoldOutText || "High Demand — Almost Sold Out!").replace(/\{stock\}/gi, "0");
+  }
+
+  // Strip leading emoji if showIcon is false, or prepend icon if configured
+  let previewDisplay = baseMsg;
+  if (!settings.showIcon) {
+    previewDisplay = baseMsg.replace(/^[\s\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}]+/u, "").trim();
+  } else if (settings.icon && settings.icon !== "none") {
+    const hasEmojiPrefix = /^[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}]/u.test(baseMsg.trim());
+    if (!hasEmojiPrefix) {
+      previewDisplay = `${settings.icon} ${baseMsg.trim()}`;
+    }
+  }
 
   return (
     <Modal
@@ -217,7 +256,7 @@ export default function LowStockCustomizeModal({
             </Banner>
           )}
 
-          {/* LIVE PREVIEW BOX */}
+          {/* LIVE PREVIEW BOX WITH STATE SWITCHER */}
           <Box
             padding="400"
             borderWidth="025"
@@ -225,14 +264,32 @@ export default function LowStockCustomizeModal({
             borderRadius="300"
             background="bg-surface-secondary"
           >
-            <BlockStack gap="200">
+            <BlockStack gap="300">
               <InlineStack align="space-between" blockAlign="center">
-                <Text variant="headingSm" as="h4">
-                  Storefront Live Preview
-                </Text>
-                <Text variant="bodyXs" tone="subdued">
-                  Simulating 4 units in stock
-                </Text>
+                <BlockStack gap="050">
+                  <Text variant="headingSm" as="h4">
+                    Storefront Live Preview
+                  </Text>
+                  <Text variant="bodyXs" tone="subdued">
+                    {previewState === "in_stock" ? "Simulating product with 4 units in stock" : "Simulating product with 0 / depleted units"}
+                  </Text>
+                </BlockStack>
+                <ButtonGroup segmented>
+                  <Button
+                    size="slim"
+                    pressed={previewState === "in_stock"}
+                    onClick={() => setPreviewState("in_stock")}
+                  >
+                    In-Stock (4)
+                  </Button>
+                  <Button
+                    size="slim"
+                    pressed={previewState === "depleted"}
+                    onClick={() => setPreviewState("depleted")}
+                  >
+                    Depleted / Sold Out (0)
+                  </Button>
+                </ButtonGroup>
               </InlineStack>
 
               <div
@@ -248,7 +305,7 @@ export default function LowStockCustomizeModal({
                     display: "flex",
                     flexDirection: "column",
                     gap: "4px",
-                    padding: "12px 16px",
+                    padding: `${settings.padding ?? 12}px 16px`,
                     borderRadius: `${settings.borderRadius ?? 8}px`,
                     backgroundColor: settings.backgroundColor || "#FFF1F2",
                     border: `1px solid ${settings.borderColor || "#FECDD3"}`,
@@ -261,21 +318,21 @@ export default function LowStockCustomizeModal({
                       display: "flex",
                       alignItems: "center",
                       gap: "8px",
-                      fontSize: "15px",
+                      fontSize: `${settings.fontSize ?? 15}px`,
                       fontWeight: "700",
                       lineHeight: "1.3",
                       color: settings.textColor || "#991B1B",
                     }}
                   >
-                    <span>{previewMainText}</span>
+                    <span>{previewDisplay}</span>
                   </div>
-                  {settings.subtext ? (
+                  {settings.showSubtext && settings.subtext ? (
                     <div
                       style={{
                         fontSize: "13px",
                         fontWeight: "500",
                         color: settings.subtextColor || "#B91C1C",
-                        marginLeft: "24px",
+                        marginLeft: settings.showIcon ? "24px" : "0px",
                         marginTop: "2px",
                       }}
                     >
@@ -289,30 +346,100 @@ export default function LowStockCustomizeModal({
 
           <Divider />
 
-          {/* FORM CONTROLS */}
+          {/* BADGE CONTENT CONTROLS */}
           <FormLayout>
+            <Text variant="headingSm" as="h4">
+              Badge Content & Messages
+            </Text>
+
+            <InlineStack gap="400">
+              <div style={{ flex: 1 }}>
+                <Checkbox
+                  label="Show urgency icon / emoji"
+                  checked={Boolean(settings.showIcon)}
+                  onChange={(checked) => setSettings({ ...settings, showIcon: checked })}
+                />
+              </div>
+              {settings.showIcon && (
+                <div style={{ flex: 1 }}>
+                  <Select
+                    label="Badge Icon"
+                    options={ICON_PRESETS}
+                    value={iconMode}
+                    onChange={(val) => {
+                      setIconMode(val);
+                      if (val !== "custom") {
+                        setSettings({ ...settings, icon: val });
+                      }
+                    }}
+                  />
+                </div>
+              )}
+            </InlineStack>
+
+            {settings.showIcon && iconMode === "custom" && (
+              <TextField
+                label="Custom Emoji / Icon"
+                value={settings.icon}
+                onChange={(val) => setSettings({ ...settings, icon: val })}
+                helpText="Paste any emoji (e.g. 🚨, ⏳, 💥) or leave blank for none"
+                autoComplete="off"
+              />
+            )}
+
             <TextField
-              label="Badge Main Message"
+              label="In-Stock Badge Message"
               value={settings.badgeText}
               onChange={(val) => setSettings({ ...settings, badgeText: val })}
-              helpText="Use {stock} placeholder for actual remaining inventory count (e.g. 🔥 Only {stock} left in stock!)"
+              helpText="Message when inventory is available. Use {stock} placeholder for quantity (e.g. Only {stock} items left!)"
               autoComplete="off"
             />
 
             <TextField
-              label="Supporting Urgency Subtext"
-              value={settings.subtext}
-              onChange={(val) => setSettings({ ...settings, subtext: val })}
-              helpText="Additional demand notice displayed below the main heading"
+              label="Depleted / Almost Sold Out Message"
+              value={settings.almostSoldOutText}
+              onChange={(val) => setSettings({ ...settings, almostSoldOutText: val })}
+              helpText="Message shown when inventory is 0, negative, or depleted on storefront (e.g. High Demand — Almost Sold Out!)"
               autoComplete="off"
             />
+
+            <Checkbox
+              label="Show supporting subtext"
+              checked={Boolean(settings.showSubtext)}
+              onChange={(checked) => setSettings({ ...settings, showSubtext: checked })}
+            />
+
+            {settings.showSubtext && (
+              <TextField
+                label="Supporting Urgency Subtext"
+                value={settings.subtext}
+                onChange={(val) => setSettings({ ...settings, subtext: val })}
+                helpText="Additional demand notice displayed below the main heading"
+                autoComplete="off"
+              />
+            )}
+
+            <Checkbox
+              label="Show estimated days remaining when sales velocity is active"
+              checked={Boolean(settings.showDaysRemaining)}
+              onChange={(checked) =>
+                setSettings({ ...settings, showDaysRemaining: checked })
+              }
+              helpText="When recent orders exist, replaces subtext with dynamic estimate (e.g. Selling fast — estimated 2 days remaining)"
+            />
+
+            <Divider />
+
+            <Text variant="headingSm" as="h4">
+              Threshold & Sizing
+            </Text>
 
             <InlineStack gap="400">
               <div style={{ flex: 1 }}>
                 <TextField
                   label="Low Stock Threshold (Units)"
                   type="number"
-                  value={String(settings.threshold ?? 5)}
+                  value={String(settings.threshold ?? 6)}
                   onChange={(val) =>
                     setSettings({
                       ...settings,
@@ -339,23 +466,38 @@ export default function LowStockCustomizeModal({
               </div>
             </InlineStack>
 
-            <Checkbox
-              label="Show estimated days remaining when sales velocity is active"
-              checked={Boolean(settings.showDaysRemaining)}
-              onChange={(checked) =>
-                setSettings({ ...settings, showDaysRemaining: checked })
-              }
-            />
-
-            <Checkbox
-              label="Enable pulse animation effect on storefront"
-              checked={Boolean(settings.pulseAnimation)}
-              onChange={(checked) =>
-                setSettings({ ...settings, pulseAnimation: checked })
-              }
-            />
+            <InlineStack gap="400">
+              <div style={{ flex: 1 }}>
+                <TextField
+                  label="Main Text Font Size (px)"
+                  type="number"
+                  value={String(settings.fontSize ?? 15)}
+                  onChange={(val) =>
+                    setSettings({
+                      ...settings,
+                      fontSize: Math.max(11, Math.min(24, Number(val) || 15)),
+                    })
+                  }
+                  helpText="Standard storefront text size (default: 15px)"
+                  autoComplete="off"
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <Checkbox
+                  label="Enable pulse animation effect on storefront"
+                  checked={Boolean(settings.pulseAnimation)}
+                  onChange={(checked) =>
+                    setSettings({ ...settings, pulseAnimation: checked })
+                  }
+                />
+              </div>
+            </InlineStack>
 
             <Divider />
+
+            <Text variant="headingSm" as="h4">
+              Colors & Styling
+            </Text>
 
             <InlineStack gap="400">
               <div style={{ flex: 1 }}>

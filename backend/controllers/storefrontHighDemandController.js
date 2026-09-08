@@ -270,17 +270,39 @@ async function getHighDemandStorefrontWidget(req, res) {
 
     if (showLowStockBadge) {
       const templateText = configDoc?.badgeText || globalLowStockConfig?.badgeText || "🔥 Only {stock} left in stock!";
+      const depletedText = globalLowStockConfig?.almostSoldOutText || configDoc?.almostSoldOutText || "🔥 High Demand — Almost Sold Out!";
+      const showIcon = globalLowStockConfig?.showIcon !== false;
+      const configuredIcon = globalLowStockConfig?.icon !== undefined ? globalLowStockConfig.icon : "🔥";
+      const showSubtext = globalLowStockConfig?.showSubtext !== false;
+
+      let baseText = "";
       if (currentStock > 0) {
-        badgeMessage = templateText.replace(/\{stock\}/gi, String(currentStock));
+        baseText = templateText.replace(/\{stock\}/gi, String(currentStock));
       } else {
-        if (/\{stock\}/i.test(templateText)) {
-          badgeMessage = "🔥 High Demand — Almost Sold Out!";
+        if (depletedText) {
+          baseText = depletedText.replace(/\{stock\}/gi, "0");
+        } else if (/\{stock\}/i.test(templateText)) {
+          baseText = templateText.replace(/\{stock\}/gi, "0");
         } else {
-          badgeMessage = templateText;
+          baseText = templateText;
         }
       }
 
-      if (showDaysRemaining && typeof daysUntilStockout === "number" && daysUntilStockout > 0) {
+      // Handle icon
+      if (!showIcon) {
+        badgeMessage = baseText.replace(/^[\s\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}]+/u, "").trim();
+      } else {
+        const hasEmojiPrefix = /^[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}]/u.test(baseText.trim());
+        if (!hasEmojiPrefix && configuredIcon && configuredIcon !== "none") {
+          badgeMessage = `${configuredIcon} ${baseText.trim()}`;
+        } else {
+          badgeMessage = baseText.trim();
+        }
+      }
+
+      if (!showSubtext) {
+        badgeSubtext = "";
+      } else if (showDaysRemaining && typeof daysUntilStockout === "number" && daysUntilStockout > 0) {
         const daysText = daysUntilStockout <= 1 ? "estimated 1 day remaining." : `estimated ${Math.ceil(daysUntilStockout)} days remaining.`;
         badgeSubtext = `Selling fast — ${daysText}`;
       } else {
@@ -318,11 +340,16 @@ async function getHighDemandStorefrontWidget(req, res) {
         showDaysRemaining,
         message: badgeMessage,
         subtext: badgeSubtext,
+        showSubtext: globalLowStockConfig?.showSubtext !== false,
+        showIcon: globalLowStockConfig?.showIcon !== false,
+        icon: globalLowStockConfig?.icon || "🔥",
         backgroundColor: globalLowStockConfig?.backgroundColor || configDoc?.badgeBackgroundColor || "#FFF1F2",
         borderColor: globalLowStockConfig?.borderColor || "#FECDD3",
         textColor: globalLowStockConfig?.textColor || configDoc?.badgeColor || "#991B1B",
         subtextColor: globalLowStockConfig?.subtextColor || "#B91C1C",
         borderRadius: globalLowStockConfig?.borderRadius ?? 8,
+        fontSize: globalLowStockConfig?.fontSize || 15,
+        padding: globalLowStockConfig?.padding || 12,
         pulseAnimation: globalLowStockConfig?.pulseAnimation !== false,
       },
       preOrder: {

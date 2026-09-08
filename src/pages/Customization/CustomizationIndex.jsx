@@ -572,7 +572,8 @@ export default function CustomizationIndex({ shopDomain = "", initialConfig = nu
                         marginTop: "4px",
                       }}
                     >
-                      <div><strong>Message:</strong> {lowStockConfig.badgeText || "Only {stock} left in stock!"}</div>
+                      <div><strong>In-Stock:</strong> {lowStockConfig.badgeText || "Only {stock} left in stock!"}</div>
+                      <div><strong>Depleted:</strong> {lowStockConfig.almostSoldOutText || "High Demand — Almost Sold Out!"}</div>
                       <div><strong>Threshold:</strong> Stock ≤ {lowStockConfig.threshold || 5} units</div>
                     </div>
                   </BlockStack>

@@ -103,9 +103,10 @@ async function getHighDemandStorefrontStatus(req, res) {
     const isOverallEnabled = showUrgencyBadge || showPreOrder;
 
     const rawBadgeText = config?.badgeText || "Only {stock} left in stock!";
+    const depletedText = config?.almostSoldOutText || "High Demand — Almost Sold Out!";
     const formattedBadgeText = stock > 0
       ? rawBadgeText.replace("{stock}", String(stock))
-      : (/\{stock\}/i.test(rawBadgeText) ? "🔥 High Demand — Almost Sold Out!" : rawBadgeText);
+      : (depletedText || rawBadgeText.replace("{stock}", "0"));
 
     return res.status(200).json({
       success: true,

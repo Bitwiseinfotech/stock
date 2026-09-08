@@ -632,7 +632,7 @@
     shieldEl.id = "smart-stock-stockout-shield";
     shieldEl.className = "smart-stock-high-demand";
 
-    const defaultMsg = stock > 0 ? `🔥 Only ${stock} left in stock!` : `🔥 High Demand — Almost Sold Out!`;
+    const defaultMsg = stock > 0 ? `🔥 Only ${stock} left in stock!` : `High Demand — Almost Sold Out!`;
     const badgeMessage = data.lowStockBadge?.message || data.widget?.message || defaultMsg;
     const badgeSubtext = data.lowStockBadge?.subtext || data.widget?.subtext || "";
     const bgColor = data.lowStockBadge?.backgroundColor || "#FFF1F2";
@@ -640,14 +640,17 @@
     const textColor = data.lowStockBadge?.textColor || "#991B1B";
     const subtextColor = data.lowStockBadge?.subtextColor || "#B91C1C";
     const borderRadius = (data.lowStockBadge?.borderRadius ?? 8) + "px";
+    const fontSize = (data.lowStockBadge?.fontSize ?? 15) + "px";
+    const paddingVal = (data.lowStockBadge?.padding ?? 12) + "px 16px";
     const pulseStyle = data.lowStockBadge?.pulseAnimation ? "animation: smartStockPulse 2s infinite ease-in-out;" : "";
+    const showIcon = data.lowStockBadge?.showIcon !== false;
 
     shieldEl.innerHTML = `
-      <div class="smart-stock-badge-container" style="background-color: ${escapeHtml(bgColor)}; border-color: ${escapeHtml(borderColor)}; border-radius: ${escapeHtml(borderRadius)}; color: ${escapeHtml(textColor)}; ${pulseStyle}">
-        <div class="smart-stock-badge-main" style="color: ${escapeHtml(textColor)};">
+      <div class="smart-stock-badge-container" style="background-color: ${escapeHtml(bgColor)}; border-color: ${escapeHtml(borderColor)}; border-radius: ${escapeHtml(borderRadius)}; padding: ${escapeHtml(paddingVal)}; color: ${escapeHtml(textColor)}; ${pulseStyle}">
+        <div class="smart-stock-badge-main" style="color: ${escapeHtml(textColor)}; font-size: ${escapeHtml(fontSize)};">
           <span>${escapeHtml(badgeMessage)}</span>
         </div>
-        ${badgeSubtext ? `<div class="smart-stock-badge-subtext" style="color: ${escapeHtml(subtextColor)};">${escapeHtml(badgeSubtext)}</div>` : ""}
+        ${badgeSubtext ? `<div class="smart-stock-badge-subtext" style="color: ${escapeHtml(subtextColor)}; ${!showIcon ? 'margin-left: 0;' : ''}">${escapeHtml(badgeSubtext)}</div>` : ""}
       </div>
     `;
 

@@ -467,6 +467,10 @@ const LowStockBadgeConfig = require("../models/LowStockBadgeConfig");
 const DEFAULT_LOW_STOCK_CONFIG = {
   enabled: true,
   badgeText: "🔥 Only {stock} left in stock!",
+  almostSoldOutText: "🔥 High Demand — Almost Sold Out!",
+  showIcon: true,
+  icon: "🔥",
+  showSubtext: true,
   subtext: "Selling fast – high demand detected.",
   threshold: 5,
   showDaysRemaining: true,
@@ -475,6 +479,8 @@ const DEFAULT_LOW_STOCK_CONFIG = {
   textColor: "#991B1B",
   subtextColor: "#B91C1C",
   borderRadius: 8,
+  fontSize: 15,
+  padding: 12,
   pulseAnimation: true,
 };
 
@@ -511,7 +517,11 @@ async function updateLowStockConfig(req, res) {
       {
         $set: {
           enabled: typeof payload.enabled === "boolean" ? payload.enabled : true,
-          badgeText: payload.badgeText || DEFAULT_LOW_STOCK_CONFIG.badgeText,
+          badgeText: payload.badgeText !== undefined ? payload.badgeText : DEFAULT_LOW_STOCK_CONFIG.badgeText,
+          almostSoldOutText: payload.almostSoldOutText !== undefined ? payload.almostSoldOutText : DEFAULT_LOW_STOCK_CONFIG.almostSoldOutText,
+          showIcon: typeof payload.showIcon === "boolean" ? payload.showIcon : true,
+          icon: payload.icon !== undefined ? payload.icon : DEFAULT_LOW_STOCK_CONFIG.icon,
+          showSubtext: typeof payload.showSubtext === "boolean" ? payload.showSubtext : true,
           subtext: payload.subtext !== undefined ? payload.subtext : DEFAULT_LOW_STOCK_CONFIG.subtext,
           threshold: Number(payload.threshold) > 0 ? Number(payload.threshold) : DEFAULT_LOW_STOCK_CONFIG.threshold,
           showDaysRemaining: typeof payload.showDaysRemaining === "boolean" ? payload.showDaysRemaining : true,
@@ -520,6 +530,8 @@ async function updateLowStockConfig(req, res) {
           textColor: payload.textColor || DEFAULT_LOW_STOCK_CONFIG.textColor,
           subtextColor: payload.subtextColor || DEFAULT_LOW_STOCK_CONFIG.subtextColor,
           borderRadius: Number(payload.borderRadius) >= 0 ? Number(payload.borderRadius) : 8,
+          fontSize: Number(payload.fontSize) >= 10 ? Number(payload.fontSize) : 15,
+          padding: Number(payload.padding) >= 0 ? Number(payload.padding) : 12,
           pulseAnimation: typeof payload.pulseAnimation === "boolean" ? payload.pulseAnimation : true,
         },
       },
