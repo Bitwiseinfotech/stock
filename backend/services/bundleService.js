@@ -9,18 +9,21 @@ const { getProduct, createBundleProduct } = require("./shopifyBundleService");
 
 const PRODUCTS_QUERY = `
 query getCompanionProducts($first: Int!) {
-  products(first: $first) {
+  products(first: $first, sortKey: UPDATED_AT, reverse: true) {
     nodes {
       id
       title
+      status
+      totalInventory
       featuredImage {
         url
       }
-      variants(first: 5) {
+      variants(first: 10) {
         nodes {
           id
           sku
           price
+          inventoryQuantity
         }
       }
     }
@@ -684,6 +687,13 @@ async function createBOGOBundle(
       });
     } catch (auditErr) {}
 
+    try {
+      const { clearStorefrontCache } = require("../controllers/storefrontController");
+      if (typeof clearStorefrontCache === "function") {
+        clearStorefrontCache(cleanShopDomain);
+      }
+    } catch (_) {}
+
     return {
       success: true,
       message: existing ? "BOGO bundle updated successfully." : "BOGO bundle created successfully.",
@@ -932,6 +942,13 @@ async function createNormalBundle(
       });
     } catch (auditErr) {}
 
+    try {
+      const { clearStorefrontCache } = require("../controllers/storefrontController");
+      if (typeof clearStorefrontCache === "function") {
+        clearStorefrontCache(cleanShopDomain);
+      }
+    } catch (_) {}
+
     return {
       success: true,
       message: existing ? "Dead stock bundle updated successfully." : "Dead stock bundle created successfully.",
@@ -964,6 +981,39 @@ async function getCompanionProducts(shop, accessToken, deadStockProductId) {
     const formattedDeadStockProductId = normalizeShopifyId(deadStockProductId, "Product");
     const cleanProductId = cleanIdNumber(deadStockProductId);
 
+    // Resolve both productId and variantId of the target to exclude both
+    const excludeIds = new Set([
+      deadStockProductId,
+      formattedDeadStockProductId,
+      cleanProductId,
+      `gid://shopify/Product/${cleanProductId}`,
+      `gid://shopify/ProductVariant/${cleanProductId}`,
+    ]);
+
+    // Find the deadstock item to get its counterpart ID (e.g. if variantId passed, get its productId)
+    const targetDoc = await DeadStock.findOne({
+      $or: [
+        { variantId: { $in: [cleanProductId, `gid://shopify/ProductVariant/${cleanProductId}`] } },
+        { productId: { $in: [cleanProductId, `gid://shopify/Product/${cleanProductId}`] } },
+      ],
+    }).lean().catch(() => null);
+
+    if (targetDoc) {
+      if (targetDoc.productId) {
+        const cP = cleanIdNumber(targetDoc.productId);
+        excludeIds.add(targetDoc.productId);
+        excludeIds.add(cP);
+        excludeIds.add(`gid://shopify/Product/${cP}`);
+      }
+      if (targetDoc.variantId) {
+        const cV = cleanIdNumber(targetDoc.variantId);
+        excludeIds.add(targetDoc.variantId);
+        excludeIds.add(cV);
+        excludeIds.add(`gid://shopify/ProductVariant/${cV}`);
+      }
+    }
+    const excludeArray = Array.from(excludeIds).filter(Boolean);
+
     let validToken = accessToken;
     if (!validToken && cleanShopDomain) {
       const storeRecord = await Store.findOne({
@@ -975,17 +1025,22 @@ async function getCompanionProducts(shop, accessToken, deadStockProductId) {
     // 1. Primary: Query Shopify GraphQL if token is available
     if (validToken && cleanShopDomain) {
       try {
-        const data = await shopifyGraphQL(cleanShopDomain, validToken, PRODUCTS_QUERY, { first: 20 });
+        const data = await shopifyGraphQL(cleanShopDomain, validToken, PRODUCTS_QUERY, { first: 100 });
         const nodes = data?.products?.nodes || [];
 
         const filtered = nodes.filter((p) => {
           const pClean = cleanIdNumber(p.id);
-          return p.id !== formattedDeadStockProductId && pClean !== cleanProductId;
+          const notCurrent = !excludeIds.has(p.id) && !excludeIds.has(pClean);
+          const notArchived = p.status !== "ARCHIVED";
+          return notCurrent && notArchived;
         });
 
         if (filtered.length > 0) {
           return filtered.map((p) => {
             const firstVariant = p.variants?.nodes?.[0];
+            const liveStock = firstVariant?.inventoryQuantity != null
+              ? Number(firstVariant.inventoryQuantity)
+              : (p.totalInventory != null ? Number(p.totalInventory) : 0);
             return {
               id: p.id,
               productId: p.id,
@@ -994,7 +1049,7 @@ async function getCompanionProducts(shop, accessToken, deadStockProductId) {
               sku: firstVariant?.sku || "N/A",
               image: p.featuredImage?.url || "",
               price: Number(firstVariant?.price || 0),
-              stock: 10,
+              stock: liveStock,
             };
           });
         }
@@ -1008,14 +1063,7 @@ async function getCompanionProducts(shop, accessToken, deadStockProductId) {
     const productItems = productModel
       ? await productModel.find({
           $or: [{ shop: cleanShopDomain }, { shop }],
-          productId: {
-            $nin: [
-              deadStockProductId,
-              formattedDeadStockProductId,
-              cleanProductId,
-              `gid://shopify/Product/${cleanProductId}`,
-            ],
-          },
+          productId: { $nin: excludeArray },
         })
           .limit(15)
           .lean()
@@ -1041,29 +1089,44 @@ async function getCompanionProducts(shop, accessToken, deadStockProductId) {
     const dbItems = await DeadStock.find({
       $or: [{ shopId: cleanShopDomain }, { shop: cleanShopDomain }, { shopId: shop }, { shop: shop }],
       status: { $ne: "archived" },
-      productId: {
-        $nin: [
-          deadStockProductId,
-          formattedDeadStockProductId,
-          cleanProductId,
-          `gid://shopify/Product/${cleanProductId}`,
-        ],
-      },
+      productId: { $nin: excludeArray },
+      variantId: { $nin: excludeArray },
     })
-      .limit(15)
+      .sort({ _id: -1 })
+      .limit(100)
       .lean();
 
     if (dbItems && dbItems.length > 0) {
-      return dbItems.map((item) => ({
-        id: item.productId || item.variantId,
-        productId: item.productId || "",
-        variantId: item.variantId || "",
-        title: item.title || "Product",
-        sku: item.sku || "N/A",
-        image: item.image || "",
-        price: Number(item.currentPrice || item.costPrice || 0),
-        stock: Number(item.stock) || 0,
-      }));
+      const seen = new Set();
+      const companions = [];
+      for (const item of dbItems) {
+        const pId = item.productId ? cleanIdNumber(item.productId) : "";
+        const vId = item.variantId ? cleanIdNumber(item.variantId) : "";
+        if (
+          excludeIds.has(item.productId) ||
+          excludeIds.has(pId) ||
+          excludeIds.has(item.variantId) ||
+          excludeIds.has(vId)
+        ) {
+          continue;
+        }
+
+        const prodKey = item.productId || item.title;
+        if (!seen.has(prodKey)) {
+          seen.add(prodKey);
+          companions.push({
+            id: item.productId || item.variantId,
+            productId: item.productId || "",
+            variantId: item.variantId || "",
+            title: item.title || "Product",
+            sku: item.sku || "N/A",
+            image: item.image || "",
+            price: Number(item.currentPrice || item.costPrice || item.price || 0),
+            stock: Number(item.stock || item.inventoryQuantity || 0),
+          });
+        }
+      }
+      return companions;
     }
 
     return [];

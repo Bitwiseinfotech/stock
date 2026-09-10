@@ -141,11 +141,14 @@ async function getProductWidgetData(req, res) {
     const isLowStock = stock > 0 && stock <= threshold;
 
     const now = new Date();
+    const cleanShopDomain = String(shopId || "").replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+    const shopCandidates = Array.from(new Set([shopId, cleanShopDomain, store?.shop].filter(Boolean)));
+
     ClearanceSale.updateMany(
       {
-        shop: shopId,
+        shop: { $in: shopCandidates },
         status: "SCHEDULED",
-        startDate: { $lte: now },
+        startDate: { $lte: new Date(now.getTime() + 60000) },
         endDate: { $gt: now },
       },
       { $set: { status: "ACTIVE" } }
@@ -153,7 +156,7 @@ async function getProductWidgetData(req, res) {
 
     ClearanceSale.updateMany(
       {
-        shop: shopId,
+        shop: { $in: shopCandidates },
         status: { $in: ["SCHEDULED", "ACTIVE"] },
         endDate: { $lte: now },
       },
@@ -161,23 +164,33 @@ async function getProductWidgetData(req, res) {
     ).catch(() => { });
 
     const clearanceQuery = {
-      shop: shopId,
+      shop: { $in: shopCandidates },
       active: true,
-      status: { $in: ["ACTIVE", "SCHEDULED"] },
-      startDate: { $lte: now },
+      $or: [
+        { status: "ACTIVE" },
+        { status: "SCHEDULED", startDate: { $lte: new Date(now.getTime() + 60000) } },
+      ],
       endDate: { $gt: now },
     };
 
     const idConditions = [];
     if (cleanVarId) {
-      idConditions.push({ variantId: { $in: [cleanVarId, `gid://shopify/ProductVariant/${cleanVarId}`] } });
+      idConditions.push(
+        { variantId: cleanVarId },
+        { variantId: `gid://shopify/ProductVariant/${cleanVarId}` },
+        { variantId: new RegExp(`${cleanVarId}$`) }
+      );
     }
     if (cleanProdId) {
-      idConditions.push({ productId: { $in: [cleanProdId, `gid://shopify/Product/${cleanProdId}`] } });
+      idConditions.push(
+        { productId: cleanProdId },
+        { productId: `gid://shopify/Product/${cleanProdId}` },
+        { productId: new RegExp(`${cleanProdId}$`) }
+      );
     }
 
     if (idConditions.length > 0) {
-      clearanceQuery.$or = idConditions;
+      clearanceQuery.$and = [{ $or: idConditions }];
     }
 
     const clearanceSale = await ClearanceSale.findOne(clearanceQuery)
@@ -212,14 +225,13 @@ async function getProductWidgetData(req, res) {
       );
     }
 
-    const cleanShopDomain = String(shopId).replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
     const LowStockBadgeConfig = require("../models/LowStockBadgeConfig");
     const PreOrderConfig = require("../models/PreOrderConfig");
 
     const [activeBundle, userClearanceConfig, globalLowStockConfig, globalPreOrderConfig] = await Promise.all([
       bundleOrConditions.length > 0
         ? Bundle.findOne({
-          shop: shopId,
+          shop: { $in: shopCandidates },
           status: "ACTIVE",
           $or: bundleOrConditions,
         })
@@ -377,11 +389,11 @@ async function getProductWidgetData(req, res) {
     }
 
     const progressiveMarkdownService = require("../services/progressiveMarkdownService");
-    const markdownData = await progressiveMarkdownService.getStorefrontMarkdownData(shopId, cleanProdId, cleanVarId).catch(() => ({ enabled: false }));
+    const markdownData = await progressiveMarkdownService.getStorefrontMarkdownData(cleanShopDomain || shopId, cleanProdId, cleanVarId).catch(() => ({ enabled: false }));
 
     const HighDemandStorefront = require("../models/HighDemandStorefront");
     const storefrontSetting = await HighDemandStorefront.findOne({
-      shop: shopId,
+      shop: { $in: shopCandidates },
       $or: [
         { variantId: `gid://shopify/ProductVariant/${cleanVarId}` },
         { variantId: cleanVarId },
@@ -406,22 +418,49 @@ async function getProductWidgetData(req, res) {
     const [smartApp, smartAssignment, activeLaunchPreOrder] = await Promise.all([
       cleanProdId
         ? SmartBadgeApplication.findOne({
-            shop: shopId,
+            shop: { $in: shopCandidates },
             productId: { $in: [cleanProdId, `gid://shopify/Product/${cleanProdId}`, String(productId)] },
             enabled: true,
           }).lean().catch(() => null)
         : null,
       cleanProdId
-        ? getBadgeAssignment(shopId, cleanProdId).catch(() => null)
+        ? getBadgeAssignment(cleanShopDomain || shopId, cleanProdId).catch(() => null)
         : null,
-      cleanProdId
+      (cleanProdId || cleanVarId)
         ? LaunchPreOrder.findOne({
-            shop: shopId,
-            productId: { $in: [cleanProdId, `gid://shopify/Product/${cleanProdId}`, String(productId)] },
+            shop: { $in: shopCandidates },
+            $or: [
+              ...(cleanProdId ? [
+                { productId: cleanProdId },
+                { productId: `gid://shopify/Product/${cleanProdId}` },
+                { productId: String(productId) },
+              ] : []),
+              ...(cleanVarId ? [
+                { variantId: cleanVarId },
+                { variantId: `gid://shopify/ProductVariant/${cleanVarId}` },
+              ] : []),
+            ],
             preOrderEnabled: true,
           }).lean().catch(() => null)
         : null,
     ]);
+
+    let isLaunchPreOrderValid = false;
+    if (activeLaunchPreOrder && activeLaunchPreOrder.preOrderEnabled) {
+      const now = new Date();
+      const launchDate = new Date(activeLaunchPreOrder.launchDate);
+      const shippingDate = activeLaunchPreOrder.shippingDate ? new Date(activeLaunchPreOrder.shippingDate) : null;
+      let cutoffDate = launchDate;
+      if (shippingDate && !isNaN(shippingDate.getTime()) && shippingDate > cutoffDate) {
+        cutoffDate = shippingDate;
+      }
+      if (!isNaN(cutoffDate.getTime())) {
+        cutoffDate.setHours(23, 59, 59, 999);
+        isLaunchPreOrderValid = now <= cutoffDate;
+      } else {
+        isLaunchPreOrderValid = true;
+      }
+    }
 
     const isSmartAssignmentActive = smartAssignment && smartAssignment.status === "ACTIVE";
     const assignedBadgeType = isSmartAssignmentActive ? smartAssignment.badgeType : null;
@@ -430,7 +469,11 @@ async function getProductWidgetData(req, res) {
     const isSmartBundle = assignedBadgeType === "BUNDLE" || (smartApp?.enabled && smartApp?.badgeType === "BUNDLE");
     const isSmartMarkdown = assignedBadgeType === "PROGRESSIVE_MARKDOWN" || (smartApp?.enabled && smartApp?.badgeType === "PROGRESSIVE_MARKDOWN");
     const isSmartLowStock = assignedBadgeType === "LOW_STOCK" || (smartApp?.enabled && smartApp?.badgeType === "LOW_STOCK");
-    const isSmartPreOrder = assignedBadgeType === "PRE_ORDER" || (smartApp?.enabled && smartApp?.badgeType === "PRE_ORDER") || Boolean(activeLaunchPreOrder);
+    const isSmartPreOrder = assignedBadgeType === "PRE_ORDER" || (smartApp?.enabled && smartApp?.badgeType === "PRE_ORDER") || isLaunchPreOrderValid;
+
+    const isExplicitlyDisabled =
+      storefrontSetting?.lowStockBadge?.enabled === false ||
+      storefrontSetting?.urgencyBadgeEnabled === false;
 
     const isExplicitlyEnabledOnProduct = parseBoolean(
       storefrontSetting?.lowStockBadge?.enabled ??
@@ -440,7 +483,7 @@ async function getProductWidgetData(req, res) {
       false
     );
 
-    const isUrgencyActive = isGlobalLowStockEnabled && (isSmartLowStock || isExplicitlyEnabledOnProduct);
+    const isUrgencyActive = isGlobalLowStockEnabled && !isExplicitlyDisabled && (isSmartLowStock || isExplicitlyEnabledOnProduct || isLowStock);
     const isUrgencyShowing = isGlobalLowStockEnabled && isUrgencyActive && stock > 0 && (
       isExplicitlyEnabledOnProduct ||
       isSmartLowStock ||
@@ -601,7 +644,7 @@ async function getProductWidgetData(req, res) {
         productId: hasClearanceOffer ? (clearanceSale?.productId || cleanProdId || null) : null,
         saleVariantId: hasClearanceOffer ? (clearanceSale?.variantId || cleanVarId || null) : null,
         discountPercent: hasClearanceOffer ? finalDiscountVal : 0,
-        badgeText: hasClearanceOffer ? `🏷️ ${finalDiscountVal}% OFF` : "",
+        badgeText: hasClearanceOffer ? `${finalDiscountVal}% OFF` : "",
         originalPrice: hasClearanceOffer ? origPriceNum : null,
         salePrice: hasClearanceOffer ? calcSalePrice : null,
         savings: hasClearanceOffer ? calcSavings : null,
@@ -693,14 +736,20 @@ async function getStorefrontBundles(req, res) {
       });
     }
 
+    const cleanShopDomain = String(shop).replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+    const shopCandidates = Array.from(new Set([shop, cleanShopDomain, store?.shop].filter(Boolean)));
+
     const query = {
-      $or: [{ shop }, { shop: new RegExp(`^${shop}$`, "i") }, { shopId: shop }],
+      $or: [
+        { shop: { $in: shopCandidates } },
+        { shop: new RegExp(`^${cleanShopDomain}$`, "i") },
+        { shopId: { $in: shopCandidates } },
+      ],
       status: "ACTIVE",
       $and: [{ $or: matchConditions }],
     };
 
     const BundleConfig = require("../models/BundleConfig");
-    const cleanShopDomain = String(shop).replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
     const bundleConfigRaw = await BundleConfig.findOne({
       $or: [{ shop: cleanShopDomain }, { shop: shop }, { shop: new RegExp(`^${cleanShopDomain}$`, "i") }, { shopId: cleanShopDomain }],
     }).lean().catch(() => null);

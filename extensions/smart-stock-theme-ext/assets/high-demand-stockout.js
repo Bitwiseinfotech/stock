@@ -722,6 +722,41 @@
       }
     }
 
+    if (!data) {
+      try {
+        const widgetUrl = `/apps/smart-stock/product-widget?shop=${encodeURIComponent(shop)}&variantId=${encodeURIComponent(variantId)}&productId=${encodeURIComponent(productId)}&_t=${Date.now()}`;
+        const widgetRes = await fetch(widgetUrl, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          signal: activeAbortController.signal,
+        });
+        if (widgetRes.ok) {
+          const wData = await widgetRes.json();
+          if (wData && wData.success) {
+            const shield = wData.stockoutShield || wData.widget || {};
+            const low = wData.lowStockBadge || {};
+            data = {
+              success: true,
+              show: Boolean(shield.show || low.show),
+              enabled: Boolean(shield.enabled || low.enabled),
+              productId,
+              variantId,
+              stock: wData.stock ?? 0,
+              lowStockBadge: low,
+              stockoutShield: shield,
+              urgencyBadgeEnabled: Boolean(low.enabled || shield.urgencyBadgeEnabled),
+              preOrder: wData.preOrder || {},
+              preOrderEnabled: Boolean(wData.preOrder?.enabled),
+            };
+          }
+        }
+      } catch (err) {
+        if (err.name === "AbortError") {
+          return;
+        }
+      }
+    }
+
     // Ignore if a newer generation request was initiated while waiting
     if (generation !== activeGeneration) {
       return;

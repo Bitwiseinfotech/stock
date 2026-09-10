@@ -17,6 +17,8 @@ const clearanceSaleSchema = new mongoose.Schema(
     savings: { type: Number, default: null },
     startDate: { type: Date, default: null, index: true },
     endDate: { type: Date, default: null, index: true },
+    startTime: { type: String, default: "" },
+    timezone: { type: String, default: "" },
     active: { type: Boolean, default: true, index: true },
     status: {
       type: String,

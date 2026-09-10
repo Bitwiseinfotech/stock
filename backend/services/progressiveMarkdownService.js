@@ -1359,11 +1359,13 @@ async function getStorefrontMarkdownData(shop, productId, variantId) {
   if (!shop) return { enabled: false };
 
   const MarkdownConfig = require("../models/MarkdownConfig");
+  const cleanShop = String(shop || "").trim().toLowerCase().replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
   const shopFilter = {
     $or: [
-      { shop },
-      { shop: String(shop).replace(/^https?:\/\//i, "") },
-      { shop: new RegExp(`^${shop}$`, "i") },
+      { shop: cleanShop },
+      { shop: shop },
+      { shop: new RegExp(`^${cleanShop}$`, "i") },
+      { shop: `${cleanShop.replace(/\.myshopify\.com$/, "")}.myshopify.com` },
     ],
   };
 
@@ -1398,6 +1400,8 @@ async function getStorefrontMarkdownData(shop, productId, variantId) {
             { variantId: cleanVarNum },
             { variantId: `gid://shopify/ProductVariant/${cleanVarNum}` },
             { variantId: String(variantId) },
+            { deadStockVariantId: cleanVarNum },
+            { deadStockVariantId: `gid://shopify/ProductVariant/${cleanVarNum}` },
           ],
         },
       ],
@@ -1417,6 +1421,8 @@ async function getStorefrontMarkdownData(shop, productId, variantId) {
             { productId: cleanProdNum },
             { productId: `gid://shopify/Product/${cleanProdNum}` },
             { productId: String(productId) },
+            { deadStockProductId: cleanProdNum },
+            { deadStockProductId: `gid://shopify/Product/${cleanProdNum}` },
           ],
         },
         {

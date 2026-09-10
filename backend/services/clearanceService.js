@@ -2,6 +2,25 @@ const shopifyGraphQL = require("./shopifyGraphql");
 const DeadStockAction = require("../models/DeadStockAction");
 const ClearanceSale = require("../models/ClearanceSale");
 const ClearanceSaleConfig = require("../models/ClearanceSaleConfig");
+const { DateTime } = require("luxon");
+
+const shopTimezoneCache = new Map();
+
+async function getShopTimezone(shop, accessToken) {
+  if (!shop) return "UTC";
+  if (shopTimezoneCache.has(shop)) {
+    return shopTimezoneCache.get(shop);
+  }
+  try {
+    const data = await shopifyGraphQL(shop, accessToken, `{ shop { ianaTimezone } }`);
+    const tz = data?.shop?.ianaTimezone || "UTC";
+    shopTimezoneCache.set(shop, tz);
+    return tz;
+  } catch (err) {
+    console.warn(`[ClearanceService] Failed to fetch shop timezone for ${shop}:`, err.message);
+    return "UTC";
+  }
+}
 
 // ============================================================
 // SHOPIFY GRAPHQL MUTATIONS / QUERIES
@@ -169,6 +188,10 @@ function toISOStringSafe(value, fallback = null) {
     return fallback;
   }
 
+  if (typeof value === "string" && /T\d{2}:\d{2}/.test(value) && (value.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(value))) {
+    return value;
+  }
+
   const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
@@ -214,7 +237,7 @@ function formatActionError(error) {
 async function createClearanceSale(
   shop,
   accessToken,
-  { productId, variantId, discountPercent, startDate, endDate, title }
+  { productId, variantId, discountPercent, startDate, startTime, clientTimezone, durationDays, endDate, title }
 ) {
   let formattedProductId = "";
   let formattedVariantId = "";
@@ -228,17 +251,47 @@ async function createClearanceSale(
     if (!startDate) {
       throw new Error("Start date is required.");
     }
-    const startIso = toISOStringSafe(startDate);
-    const startDay = new Date(`${startIso.slice(0, 10)}T00:00:00.000Z`);
-    const todayDay = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
-    if (startDay < todayDay) {
+
+    const shopTimezone = await getShopTimezone(shop, accessToken);
+
+    // Normalize date and time strings
+    const dateStr = String(startDate).includes("T") ? String(startDate).split("T")[0] : String(startDate).trim();
+    const timeStr = startTime && String(startTime).trim() ? String(startTime).trim() : "00:00";
+
+    // If client timezone is supplied, interpret in merchant's view timezone and convert to store timezone
+    const inputTz = clientTimezone || shopTimezone;
+    let startDt = DateTime.fromISO(`${dateStr}T${timeStr}`, { zone: inputTz }).setZone(shopTimezone);
+    if (!startDt.isValid) {
+      startDt = DateTime.fromISO(String(startDate), { zone: shopTimezone });
+    }
+    if (!startDt.isValid) {
+      throw new Error(`Invalid start date or time: ${startDate} ${timeStr}`);
+    }
+
+    const nowDt = DateTime.now().setZone(shopTimezone);
+    // If merchant set the sale for today and it's within 15 minutes of now or earlier today, activate immediately
+    const isToday = startDt.hasSame(nowDt, "day");
+    if (isToday && startDt <= nowDt.plus({ minutes: 15 })) {
+      startDt = nowDt;
+    } else if (startDt.startOf("day") < nowDt.startOf("day")) {
       throw new Error("Start date cannot be in the past.");
     }
-    const endIso = toISOStringSafe(endDate, null);
 
-    if (!endIso || new Date(endIso) <= new Date(startIso)) {
+    let endDt;
+    if (endDate) {
+      endDt = DateTime.fromISO(String(endDate), { zone: shopTimezone });
+    }
+    if ((!endDt || !endDt.isValid) && durationDays && Number(durationDays) > 0) {
+      endDt = startDt.plus({ days: Number(durationDays) });
+    }
+    if (!endDt || !endDt.isValid || endDt <= startDt) {
       throw new Error("End date must be after the start date.");
     }
+
+    const startIso = startDt.toISO();
+    const endIso = endDt.toISO();
+    const startJsDate = startDt.toJSDate();
+    const endJsDate = endDt.toJSDate();
 
     const variantData = await shopifyGraphQL(
       shop,
@@ -281,15 +334,17 @@ async function createClearanceSale(
     }
     createdDiscountId = result.discountId;
 
-    const status = new Date(startIso) > now ? "SCHEDULED" : "ACTIVE";
+    const status = startDt > nowDt ? "SCHEDULED" : "ACTIVE";
     let sale;
     if (existingSale) {
       existingSale.shopifyDiscountId = result.discountId;
       existingSale.discountType = "PERCENTAGE";
       existingSale.discountValue = discount;
       existingSale.originalPrice = variant.price == null ? null : Number(variant.price);
-      existingSale.startDate = new Date(startIso);
-      existingSale.endDate = new Date(endIso);
+      existingSale.startDate = startJsDate;
+      existingSale.endDate = endJsDate;
+      existingSale.startTime = timeStr;
+      existingSale.timezone = shopTimezone;
       existingSale.status = status;
       existingSale.active = true;
       sale = await existingSale.save();
@@ -302,8 +357,10 @@ async function createClearanceSale(
         discountType: "PERCENTAGE",
         discountValue: discount,
         originalPrice: variant.price == null ? null : Number(variant.price),
-        startDate: new Date(startIso),
-        endDate: new Date(endIso),
+        startDate: startJsDate,
+        endDate: endJsDate,
+        startTime: timeStr,
+        timezone: shopTimezone,
         status,
         active: true,
       });
@@ -318,14 +375,16 @@ async function createClearanceSale(
       discountPercent: discount,
       shopifyDiscountId: result.discountId,
       discountValue: discount,
-      startDate: new Date(startIso),
-      endDate: new Date(endIso),
+      startDate: startJsDate,
+      endDate: endJsDate,
       executedAt: new Date(),
       metadata: {
         clearanceSaleId: sale._id,
         shopifyDiscountId: result.discountId,
         startDate: startIso,
         endDate: endIso,
+        startTime: timeStr,
+        timezone: shopTimezone,
         isUpdate: Boolean(existingSale),
       },
     });
@@ -353,6 +412,8 @@ async function createClearanceSale(
       discountPercent: discount,
       startsAt: startIso,
       endsAt: endIso,
+      startTime: timeStr,
+      timezone: shopTimezone,
     };
   } catch (error) {
     const message = formatActionError(error);
@@ -1209,5 +1270,6 @@ module.exports = {
 
   addToClearanceCollection,
 
+  getShopTimezone,
   ensureGid,
 };

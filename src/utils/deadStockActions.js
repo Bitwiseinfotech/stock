@@ -11,9 +11,9 @@ export const ACTION_ORDER = [
 ];
 
 export const ACTION_LABELS = {
-  CLEARANCE_SALE: "🏷️ Clearance Sale",
-  DEAD_STOCK_BUNDLE: "📦 Dead Stock Bundle Offer",
-  PROGRESSIVE_MARKDOWN: "📉 Progressive Markdown",
+  CLEARANCE_SALE: "Clearance Sale",
+  DEAD_STOCK_BUNDLE: "Dead Stock Bundle Offer",
+  PROGRESSIVE_MARKDOWN: "Progressive Markdown",
 };
 
 export const ACTION_ALIASES = {

@@ -254,10 +254,15 @@ export async function executeDeleteBundle(shop = "", productId = "") {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/dead-stock/:variantId/companion-products
 // ─────────────────────────────────────────────────────────────────────────────
-export async function fetchCompanionProducts(shop = "", productId = "") {
+export async function fetchCompanionProducts(shop = "", productId = "", token = "") {
   const targetShop = shop || new URLSearchParams(window.location.search).get("shop") || "";
   const cleanId = getDeadStockId(productId, "fetch companion products");
-  const res = await fetch(`/api/dead-stock/${cleanId}/companion-products?shop=${encodeURIComponent(targetShop)}`);
+  const headers = {};
+  const activeToken = token || (typeof window !== "undefined" ? window.sessionStorage.getItem("activeShopifyToken") : "");
+  if (activeToken) {
+    headers["X-Shopify-Access-Token"] = activeToken;
+  }
+  const res = await fetch(`/api/dead-stock/${cleanId}/companion-products?shop=${encodeURIComponent(targetShop)}`, { headers });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.message || "Failed to fetch companion products");
   return json.data || [];

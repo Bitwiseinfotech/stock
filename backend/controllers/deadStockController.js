@@ -721,6 +721,9 @@ async function getDeadStockByVariantId(req, res) {
       ],
       status: { $in: ["SCHEDULED", "ACTIVE"] },
     }).lean().catch(() => null);
+    if (activeClearanceSale && !activeClearanceSale.startTime) {
+      activeClearanceSale.startTime = "00:00";
+    }
     formattedProduct.activeClearanceSale = activeClearanceSale;
 
     const DeadStockBundle = require("../models/DeadStockBundle");
@@ -780,10 +783,22 @@ async function getDeadStockByVariantId(req, res) {
     }).lean().catch(() => null);
     formattedProduct.activeMarkdownRule = activeMarkdownRule;
 
+    let shopTimezone = "UTC";
+    try {
+      const accessToken = await getAccessToken(req, shopId);
+      if (accessToken) {
+        shopTimezone = await clearanceService.getShopTimezone(shopId, accessToken);
+      }
+    } catch (tzErr) {
+      console.warn("Failed to get shop timezone:", tzErr.message);
+    }
+    formattedProduct.shopTimezone = shopTimezone;
+
     return res.status(200).json({
       success: true,
       product: formattedProduct,
       data: formattedProduct,
+      shopTimezone,
       activeClearanceSale,
       activeBundle,
       activeMarkdownRule,
@@ -804,7 +819,7 @@ async function createClearanceSale(req, res) {
     const shopId = req.shopId || req.query.shop || req.body?.shop || req.headers["x-shopify-shop-domain"];
     const authenticatedShop = req.headers["x-shopify-shop-domain"];
     const targetId = getParamId(req);
-    const { variantId, discountPercent, startDate, endDate, durationDays, title } = req.body || {};
+    const { variantId, discountPercent, startDate, startTime, endDate, durationDays, title, clientTimezone } = req.body || {};
 
     if (!shopId) return res.status(401).json({ success: false, message: "Shop domain is required." });
     if (authenticatedShop && authenticatedShop !== shopId) return res.status(403).json({ success: false, message: "Shop mismatch." });
@@ -824,7 +839,8 @@ async function createClearanceSale(req, res) {
     }
     if (!computedEndDate && durationDays && Number(durationDays) > 0) {
       const days = Number(durationDays);
-      const start = startDate ? new Date(startDate) : new Date();
+      const timePart = startTime ? `T${startTime}:00` : "T00:00:00";
+      const start = startDate ? new Date(startDate.includes("T") ? startDate : `${startDate}${timePart}`) : new Date();
       if (Number.isNaN(start.getTime())) return res.status(422).json({ success: false, message: "Invalid start date." });
       computedEndDate = new Date(start.getTime() + days * 86400000).toISOString();
     }
@@ -838,6 +854,9 @@ async function createClearanceSale(req, res) {
       variantId: variantId || "",
       discountPercent: Number(discountPercent),
       startDate,
+      startTime,
+      clientTimezone,
+      durationDays: durationDays ? Number(durationDays) : undefined,
       endDate: computedEndDate,
       title,
     }

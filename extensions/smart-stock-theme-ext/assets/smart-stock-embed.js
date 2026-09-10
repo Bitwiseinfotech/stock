@@ -28,20 +28,33 @@
     }
   } catch (_) {}
 
-  const config = window.SmartStockEmbedConfig;
+  function getConfig() {
+    const c = window.SmartStockEmbedConfig || window.SmartStockContext || {};
+    const shop = c.shop || (window.Shopify && window.Shopify.shop) || window.location.hostname;
+    let productId = c.productId || (window.SmartStockProduct && window.SmartStockProduct.id) || (window.ShopifyAnalytics?.meta?.product?.id) || "";
+    let variantId = c.variantId || (window.SmartStockProduct?.variants?.[0]?.id) || "";
 
-  if (
-    !config ||
-    !config.shop ||
-    !config.productId ||
-    !config.variantId
-  ) {
-    return;
+    if (!productId) {
+      const pEl = document.querySelector("[data-product-id]");
+      if (pEl) productId = pEl.getAttribute("data-product-id");
+    }
+    if (!variantId) {
+      const vEl = document.querySelector('form[action*="/cart/add"] [name="id"], [name="id"]');
+      if (vEl && vEl.value) variantId = vEl.value;
+    }
+    return {
+      shop: shop ? String(shop) : "",
+      productId: productId ? String(productId) : "",
+      variantId: variantId ? String(variantId) : "",
+      moneyFormat: c.moneyFormat || window.Shopify?.money_format || "${{amount}}",
+      currency: c.currency || window.Shopify?.currency?.active || "USD",
+    };
   }
 
+  const initialCfg = getConfig();
   const state = {
-    productId: String(config.productId),
-    variantId: String(config.variantId),
+    productId: initialCfg.productId,
+    variantId: initialCfg.variantId,
   };
 
 
@@ -57,6 +70,7 @@
     }
 
     const amount = Math.round(number * 100);
+    const activeCfg = getConfig();
 
     if (
       window.Shopify &&
@@ -64,13 +78,13 @@
     ) {
       return window.Shopify.formatMoney(
         amount,
-        config.moneyFormat || "${{amount}}"
+        activeCfg.moneyFormat || "${{amount}}"
       );
     }
 
     return new Intl.NumberFormat(undefined, {
       style: "currency",
-      currency: config.currency || "USD",
+      currency: activeCfg.currency || "USD",
     }).format(number);
   }
 
@@ -341,10 +355,20 @@
 
 
   /* =========================================================
-     FINAL INSERT
+     FINAL INSERT - CLEARANCE SALE
      ========================================================= */
 
   function insertClearanceElement(element) {
+    // 1. Direct placeholder if explicit visible clearance block exists
+    const placeholder = document.querySelector("#smart-stock-clearance-placeholder, [data-smart-stock-clearance-target]");
+    if (placeholder && !placeholder.hasAttribute("data-smart-stock-clearance-sale-root")) {
+      placeholder.style.removeProperty("display");
+      placeholder.style.display = "block";
+      placeholder.innerHTML = "";
+      placeholder.appendChild(element);
+      return true;
+    }
+
     const productForm = getProductForm();
 
     if (insertBelowBuyItNow(element, productForm)) {
@@ -355,8 +379,24 @@
       return true;
     }
 
+    // Try finding add to cart button anywhere in document if form wasn't standard
+    const atcBtn = document.querySelector('button[name="add"], input[name="add"], .product-form__submit, [data-add-to-cart]');
+    if (atcBtn && atcBtn.parentNode) {
+      const container = atcBtn.closest('.product-form__buttons, .product__buy-buttons') || atcBtn.parentNode;
+      if (container && container.parentNode) {
+        container.parentNode.insertBefore(element, container.nextSibling);
+        return true;
+      }
+    }
+
     if (productForm && productForm.parentNode) {
       productForm.parentNode.insertBefore(element, productForm.nextSibling);
+      return true;
+    }
+
+    const priceEl = document.querySelector(".price, .product__price, [data-price]");
+    if (priceEl && priceEl.parentNode) {
+      priceEl.parentNode.insertBefore(element, priceEl.nextSibling);
       return true;
     }
 
@@ -368,6 +408,84 @@
       return true;
     }
 
+    const mainContainer = document.querySelector("main, #MainContent, .main-content");
+    if (mainContainer) {
+      mainContainer.appendChild(element);
+      return true;
+    }
+
+    return false;
+  }
+
+
+  /* =========================================================
+     FINAL INSERT - DEAD STOCK BUNDLE
+     ========================================================= */
+
+  function insertBundleElement(element) {
+    // 1. Direct placeholder if dedicated bundle block exists
+    const placeholder = document.querySelector(
+      "#smart-stock-bundle-placeholder, [data-smart-stock-bundle-target], .smart-stock-bundle-widget, .ss-bundle-outer-wrapper, [id^='smart-stock-bundle-root-'], [id^='smart-stock-bundles-']"
+    );
+    if (placeholder) {
+      placeholder.style.removeProperty("display");
+      placeholder.style.display = "block";
+      placeholder.innerHTML = "";
+      placeholder.appendChild(element);
+      return true;
+    }
+
+    // 2. If clearance sale widget is rendered, insert bundle cleanly directly below clearance
+    const clearanceEl = document.querySelector('[data-smart-stock-feature="clearance"]');
+    if (clearanceEl && clearanceEl.parentNode) {
+      clearanceEl.parentNode.insertBefore(element, clearanceEl.nextSibling);
+      return true;
+    }
+
+    // 3. Otherwise insert below Buy It Now button
+    const productForm = getProductForm();
+    if (insertBelowBuyItNow(element, productForm)) {
+      return true;
+    }
+
+    // 4. Fallback after Add To Cart
+    if (insertAfterAddToCart(element, productForm)) {
+      return true;
+    }
+
+    // 5. Fallback after ATC button anywhere
+    const atcBtn = document.querySelector('button[name="add"], input[name="add"], .product-form__submit, [data-add-to-cart]');
+    if (atcBtn && atcBtn.parentNode) {
+      const container = atcBtn.closest('.product-form__buttons, .product__buy-buttons') || atcBtn.parentNode;
+      if (container && container.parentNode) {
+        container.parentNode.insertBefore(element, container.nextSibling);
+        return true;
+      }
+    }
+
+    // 6. Fallback after productForm
+    if (productForm && productForm.parentNode) {
+      productForm.parentNode.insertBefore(element, productForm.nextSibling);
+      return true;
+    }
+
+    // 7. Fallback after price
+    const priceEl = document.querySelector(".price, .product__price, [data-price]");
+    if (priceEl && priceEl.parentNode) {
+      priceEl.parentNode.insertBefore(element, priceEl.nextSibling);
+      return true;
+    }
+
+    // 8. Product info container
+    const infoContainer = document.querySelector(
+      ".product__info-container, .product__info-wrapper, .product-single__meta, .product-info, .product-details, .product__column-sticky, [data-section-type='product']"
+    );
+    if (infoContainer) {
+      infoContainer.appendChild(element);
+      return true;
+    }
+
+    // 9. Main container
     const mainContainer = document.querySelector("main, #MainContent, .main-content");
     if (mainContainer) {
       mainContainer.appendChild(element);
@@ -528,7 +646,7 @@
         "
       >
 
-        ${showIcon
+        ${showIcon && cfg?.icon && cfg.icon !== "none"
         ? `
               <span
                 style="
@@ -537,7 +655,7 @@
                   flex:0 0 auto;
                 "
               >
-                🏷️
+                ${escapeHtml(cfg.icon)}
               </span>
             `
         : ""
@@ -1459,7 +1577,7 @@
        INSERT INTO PRODUCT FORM
        ======================================================= */
 
-    insertClearanceElement(
+    insertBundleElement(
       element
     );
   }
@@ -1837,13 +1955,22 @@
      ========================================================= */
 
   async function loadFeatures() {
-    const cacheKey = "ss_widget_" + config.shop + "_" + state.productId + "_" + state.variantId;
+    const activeCfg = getConfig();
+    const shop = activeCfg.shop;
+    const productId = state.productId || activeCfg.productId;
+    const variantId = state.variantId || activeCfg.variantId;
+
+    if (!shop || (!productId && !variantId)) {
+      return;
+    }
+
+    const cacheKey = "ss_widget_" + shop + "_" + productId + "_" + variantId;
     let cachedData = null;
     try {
       const raw = sessionStorage.getItem(cacheKey);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed && parsed.data) {
+        if (parsed && parsed.data && (Date.now() - (parsed.time || 0) < 60000)) {
           // If progressive markdown is enabled, NEVER use cached data because discounts and prices change dynamically
           if (parsed.data.progressiveMarkdown?.enabled) {
             sessionStorage.removeItem(cacheKey);
@@ -1855,14 +1982,16 @@
             renderUrgency(cachedData);
             updateThemeSaleBadges(cachedData);
           }
+        } else {
+          sessionStorage.removeItem(cacheKey);
         }
       }
     } catch (_) {}
 
     const params = new URLSearchParams({
-      shop: config.shop,
-      productId: state.productId,
-      variantId: state.variantId,
+      shop: shop,
+      productId: productId,
+      variantId: variantId,
       _t: Date.now().toString(),
     });
 
@@ -1876,18 +2005,39 @@
       }
 
       if (!data) {
-        const response = await fetch(
+        const candidateUrls = [
           `/apps/smart-stock/product-widget?${params.toString()}`,
-          {
-            credentials: "same-origin",
-          }
-        );
+          `/apps/smart-stock/bundles?${params.toString()}`,
+        ];
 
-        if (!response.ok) {
-          throw new Error(`Smart Stock request failed: ${response.status}`);
+        for (const url of candidateUrls) {
+          try {
+            const response = await fetch(url, {
+              credentials: "same-origin",
+            });
+            if (response.ok) {
+              const resJson = await response.json();
+              if (resJson && (resJson.success || resJson.deadStockOffer || resJson.data)) {
+                data = resJson;
+                break;
+              }
+            }
+          } catch (_) {}
         }
+      }
 
-        data = await response.json();
+      if (data && Array.isArray(data.data) && !data.deadStockOffer && data.data.length > 0) {
+        data = {
+          success: true,
+          shop: shop,
+          deadStockOffer: {
+            hasBundle: true,
+            bundle: data.data[0],
+            bundleName: data.data[0].bundleName,
+            bundleDiscountPercent: data.data[0].discountPercent,
+          },
+          bundleConfig: data.bundleConfig || activeCfg.bundleConfig,
+        };
       }
 
       if (!data?.deadStockOffer?.hasClearance && !data?.deadStockOffer?.hasBundle) {

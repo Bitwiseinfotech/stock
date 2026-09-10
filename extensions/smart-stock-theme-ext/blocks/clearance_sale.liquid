@@ -311,7 +311,21 @@
       return productForm;
     }
 
-    return null;
+    // 6. Price Container fallback
+    var priceEl = document.querySelector(".price, .product__price, [data-price]");
+    if (priceEl && priceEl.parentNode) {
+      return priceEl;
+    }
+
+    // 7. Product Info container
+    var infoContainer = document.querySelector(
+      ".product__info-container, .product__info-wrapper, .product-single__meta, .product-info, .product-details, .product__column-sticky, [data-section-type='product']"
+    );
+    if (infoContainer) {
+      return infoContainer;
+    }
+
+    return document.querySelector("main, #MainContent, .main-content");
   }
 
 
@@ -348,7 +362,7 @@
     var button = getBuyItNowButton();
     var target = getInsertTarget(button);
 
-    if (!target || !target.parentNode) {
+    if (!target) {
       return false;
     }
 
@@ -358,12 +372,13 @@
     removeRenderedClearance();
 
     /*
-     * Insert directly after Buy It Now / Payment Buttons
+     * Insert directly after Buy It Now / Payment Buttons or append to container
      */
-    target.parentNode.insertBefore(
-      element,
-      target.nextSibling
-    );
+    if (target.parentNode && target !== document.body && !target.matches?.("main, #MainContent, .main-content, .product__info-container, .product-single__meta")) {
+      target.parentNode.insertBefore(element, target.nextSibling);
+    } else {
+      target.appendChild(element);
+    }
 
     return true;
   }
@@ -638,11 +653,10 @@
 
     var iconHTML = "";
 
-    if (showIcon) {
-
+    if (showIcon && config && config.icon && config.icon !== "none") {
       iconHTML =
         '<span class="smart-stock-clearance-sale__icon" aria-hidden="true">' +
-          "🏷️" +
+          config.icon +
         "</span>";
     }
 
@@ -955,8 +969,10 @@
       var raw = sessionStorage.getItem(cacheKey);
       if (raw) {
         var parsed = JSON.parse(raw);
-        if (parsed && parsed.data) {
+        if (parsed && parsed.data && parsed.data.deadStockOffer && parsed.data.deadStockOffer.hasClearance && (Date.now() - (parsed.time || 0) < 60000)) {
           renderSale(parsed.data);
+        } else {
+          sessionStorage.removeItem(cacheKey);
         }
       }
     } catch (_) {}
@@ -1490,7 +1506,7 @@
 
 {% schema %}
 {
-  "name": "🏷️ Clearance Sale",
+  "name": "Clearance Sale",
   "target": "section",
   "settings": [
     {

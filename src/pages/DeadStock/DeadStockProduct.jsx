@@ -78,6 +78,7 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
   const [clearanceDiscount, setClearanceDiscount] = useState("20");
   const [clearanceDuration, setClearanceDuration] = useState("14");
   const [clearanceStartDate, setClearanceStartDate] = useState("");
+  const [clearanceStartTime, setClearanceStartTime] = useState("");
 
   // Create Bundle
   const [bundleName, setBundleName] = useState("");
@@ -186,9 +187,41 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
           if (diffDays > 0) {
             setClearanceDuration(String(diffDays));
           }
-          const sStr = start.toISOString().split("T")[0];
+          let sStr = "";
+          if (product.activeClearanceSale.timezone) {
+            try {
+              sStr = new Intl.DateTimeFormat("en-CA", {
+                timeZone: product.activeClearanceSale.timezone,
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+              }).format(start);
+            } catch (_) {
+              sStr = start.toISOString().split("T")[0];
+            }
+          } else {
+            sStr = start.toISOString().split("T")[0];
+          }
           setClearanceStartDate(sStr >= todayDateValue() ? sStr : todayDateValue());
+
+          // Load previously saved start time or default to 00:00 for legacy
+          if (product.activeClearanceSale.startTime) {
+            setClearanceStartTime(product.activeClearanceSale.startTime);
+          } else {
+            setClearanceStartTime("00:00");
+          }
+        } else {
+          setClearanceStartDate(todayDateValue());
+          setClearanceStartTime(product.activeClearanceSale.startTime || "00:00");
         }
+      } else {
+        setClearanceDiscount("20");
+        setClearanceDuration("14");
+        setClearanceStartDate(todayDateValue());
+        const now = new Date();
+        const hh = String(now.getHours()).padStart(2, "0");
+        const mm = String(now.getMinutes()).padStart(2, "0");
+        setClearanceStartTime(`${hh}:${mm}`);
       }
     }        
     if (type === "markdown" && product?.activeMarkdownRule) {
@@ -247,6 +280,10 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
         else if (value < todayDateValue()) message = "Start date cannot be in the past.";
       }
     }
+    if (field === "startTime") {
+      if (!value || !String(value).trim()) message = "Start time is required.";
+      else if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value).trim())) message = "Please enter a valid start time (e.g. 10:30 AM).";
+    }
     if (field === "discount" && (!Number.isFinite(Number(value)) || Number(value) <= 0 || Number(value) > 100)) message = "Discount must be greater than 0 and no more than 100%.";
     if (field === "duration" && (!Number.isFinite(Number(value)) || Number(value) <= 0)) message = "Duration must be greater than 0 days.";
     return message;
@@ -260,12 +297,14 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
 
   const clearanceFormInvalid =
     Boolean(getClearanceFieldError("startDate", clearanceStartDate)) ||
+    Boolean(getClearanceFieldError("startTime", clearanceStartTime)) ||
     Boolean(getClearanceFieldError("discount", clearanceDiscount)) ||
     Boolean(getClearanceFieldError("duration", clearanceDuration));
 
   const validateClearanceForm = () => {
     const errors = {
       startDate: validateClearanceField("startDate", clearanceStartDate),
+      startTime: validateClearanceField("startTime", clearanceStartTime),
       discount: validateClearanceField("discount", clearanceDiscount),
       duration: validateClearanceField("duration", clearanceDuration),
     };
@@ -291,6 +330,8 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
         discountPercent: discount,
         durationDays: duration,
         startDate: clearanceStartDate,
+        startTime: clearanceStartTime,
+        clientTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         title: `Clearance ${clearanceDiscount}% Off - ${product?.title}`,
       });
 
@@ -544,17 +585,17 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
           </Badge>
           {isClearanceActive && (
             <Badge tone="success">
-              🏷️ Clearance Active ({product.activeClearanceSale?.discountValue || 20}% OFF)
+              Clearance Active ({product.activeClearanceSale?.discountValue || 20}% OFF)
             </Badge>
           )}
           {product?.activeBundle && (
             <Badge tone="info">
-              📦 Bundle Active
+              Bundle Active
             </Badge>
           )}
           {product?.activeMarkdownRule && (
             <Badge tone="success">
-              📉 Markdown ({product.activeMarkdownRule.currentDiscount}% OFF)
+              Markdown ({product.activeMarkdownRule.currentDiscount}% OFF)
             </Badge>
           )}
         </InlineStack>
@@ -698,7 +739,7 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
                 <BlockStack gap="300">
                   <InlineStack align="space-between" blockAlign="center">
                     <Text variant="headingSm" as="h3" fontWeight="semibold">
-                      🏷️ Clearance Sale
+                      Clearance Sale
                     </Text>
                     <Badge tone={isClearanceActive ? "success" : "subdued"}>
                       {isClearanceActive ? "● Enabled" : "○ Not Configured"}
@@ -738,7 +779,7 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="center" wrap={true}>
                       <Text variant="headingSm" as="h3" fontWeight="semibold">
-                        📦 Dead Stock Bundle
+                        Dead Stock Bundle
                       </Text>
                       <Badge tone={product?.activeBundle ? "success" : "subdued"}>
                         {product?.activeBundle ? "● Active Bundle" : "○ Not Configured"}
@@ -779,7 +820,7 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="center">
                       <Text variant="headingSm" as="h3" fontWeight="semibold">
-                        📉 Progressive Markdown
+                        Progressive Markdown
                       </Text>
                       <Badge tone={product?.activeMarkdownRule ? "success" : "subdued"}>
                         {product?.activeMarkdownRule
@@ -983,6 +1024,19 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
                 onBlur={() => validateClearanceField("startDate", clearanceStartDate)}
                 error={clearanceErrors.startDate}
                 autoComplete="off"
+              />
+              <TextField
+                label="Start time"
+                type="time"
+                value={clearanceStartTime}
+                onChange={(value) => {
+                  setClearanceStartTime(value);
+                  validateClearanceField("startTime", value);
+                }}
+                onBlur={() => validateClearanceField("startTime", clearanceStartTime)}
+                error={clearanceErrors.startTime}
+                autoComplete="off"
+                helpText="Example: 10:30 AM"
               />
             
             </FormLayout>

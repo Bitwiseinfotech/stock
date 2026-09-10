@@ -116,8 +116,7 @@ export default function BillingPlans({ shopDomain = "", initialParams = {} }) {
         subject: supportSubject.trim(),
         message: supportMessage.trim(),
       });
-      setSupportSuccess(true);
-      setSupportSubject("");
+      setSupportSuccess(true);       
       setSupportMessage("");
     } catch (err) {
       console.error("Failed to submit support request:", err);
