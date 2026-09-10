@@ -91,6 +91,19 @@
     {% endif %}
   </script>
 
+  {% if product %}
+    <div
+      id="smart-stock-high-demand"
+      class="smart-stock-high-demand-embed"
+      data-product-id="{{ product.id }}"
+      data-variant-id="{{ product.selected_or_first_available_variant.id }}"
+      data-shop="{{ shop.permanent_domain }}"
+      data-stock="{{ product.selected_or_first_available_variant.inventory_quantity | default: 0 }}"
+      style="display: none;"
+      hidden
+    ></div>
+  {% endif %}
+
   <script src="{{ 'smart-stock-embed.js' | asset_url }}" defer></script>
   <link rel="stylesheet" href="{{ 'smart-stock-embed.css' | asset_url }}">
 
@@ -108,7 +121,7 @@
   "name": "Smart Stock",
   "target": "head",
   "settings": [
-    {
+    {         
       "type": "checkbox",
       "id": "enabled",
       "label": "Smart Stock — Enable storefront intelligence",
