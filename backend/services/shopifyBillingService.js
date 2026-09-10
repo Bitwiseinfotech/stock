@@ -129,7 +129,7 @@ async function createAppSubscription({
     variables
   );
 
-  const result = data?.appSubscriptionCreate;
+  const result = data?.appSubscriptionCreate;           
 
   if (result?.userErrors && result.userErrors.length > 0) {
     const errorMsg = result.userErrors.map((e) => e.message).join(", ");

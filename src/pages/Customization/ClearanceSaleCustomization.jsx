@@ -140,7 +140,7 @@ export default function ClearanceSaleCustomization({ shopDomain = "", initialCon
       });
     } catch (err) {
       setBannerMessage({
-        tone: "critical",
+        tone: "critical",  
         text: "Failed to save Clearance Sale configuration. Please try again.",
       });
     } finally {

@@ -98,7 +98,7 @@ export default function ChangePlanModal({
                 </InlineStack>
 
                 <Text variant="bodySm" tone="subdued" as="p">
-                  📦 {selectedPlan.products} • {selectedPlan.description}
+                  {selectedPlan.products} • {selectedPlan.description}
                 </Text>
               </BlockStack>
 

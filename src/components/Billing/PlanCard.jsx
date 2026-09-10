@@ -86,7 +86,7 @@ export default function PlanCard({
 
               <Box paddingBlockStart="050">
                 <span style={{ color: "#202223", fontSize: "13px", fontWeight: "600" }}>
-                  📦 {plan.products}
+                  {plan.products}
                 </span>
               </Box>
             </BlockStack>

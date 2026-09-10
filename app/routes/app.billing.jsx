@@ -4,10 +4,15 @@ import BillingPlans from "../../src/pages/Billing/BillingPlans";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
-  return { shop: session?.shop || "" };
+  const url = new URL(request.url);
+  const searchParams = Object.fromEntries(url.searchParams);
+  return {
+    shop: session?.shop || searchParams.shop || "",
+    searchParams,
+  };
 };
 
 export default function BillingRoute() {
-  const { shop } = useLoaderData();
-  return <BillingPlans shopDomain={shop} />;
+  const { shop, searchParams } = useLoaderData();
+  return <BillingPlans shopDomain={shop} initialParams={searchParams} />;
 }

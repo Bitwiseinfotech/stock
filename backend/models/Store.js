@@ -31,7 +31,12 @@ const storeSchema = new mongoose.Schema(
     installedAt: {
         type: Date,
         default: Date.now,
-    }
+    },
+
+    appHandle: {
+        type: String,
+        default: null,
+    },
 
 },
 

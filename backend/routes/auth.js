@@ -133,39 +133,34 @@ try{
         });
     }
 
+    // Resolve app handle
+    let appHandle = null;
+    try {
+        const shopifyGraphQL = require("../services/shopifyGraphql");
+        const appRes = await shopifyGraphQL(shop, accessToken, `query { currentAppInstallation { app { handle } } }`);
+        appHandle = appRes?.currentAppInstallation?.app?.handle || null;
+    } catch (e) {
+        console.warn("[Auth] Could not fetch app handle during install:", e.message);
+    }
+
     // Save Store
-
     const store =
-    await Store.findOneAndUpdate(
-
+    await Store.findOneAndUpdate(                              
         {
             shop
         },
-
-
         {
-
             shop,
-
             accessToken,
-
             scope: grantedScopes,
-
+            ...(appHandle ? { appHandle } : {}),
             active:true,
-
             installedAt:new Date()
-
         },
-
-
         {
-
             upsert:true,
-
             new:true
-
         }
-
     );
 
 

@@ -32,7 +32,7 @@ import PlanCard from "../../components/Billing/PlanCard";
 import ChangePlanModal from "../../components/Billing/ChangePlanModal";
 import SwitchFreeModal from "../../components/Billing/SwitchFreeModal";
 
-export default function BillingPlans({ shopDomain = "" }) {
+export default function BillingPlans({ shopDomain = "", initialParams = {} }) {
   const navigate = useNavigate();
   const comparisonSectionRef = useRef(null);
 
@@ -46,6 +46,7 @@ export default function BillingPlans({ shopDomain = "" }) {
   // Extract shop from prop or fallback to URL query parameters
   const [shop] = useState(() => {
     if (shopDomain) return shopDomain;
+    if (initialParams?.shop) return initialParams.shop;
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       return (
@@ -131,17 +132,17 @@ export default function BillingPlans({ shopDomain = "" }) {
     setLoading(true);
     setError(null);
     try {
-      let urlChargeId = "";
-      let urlPlan = "";
-      let urlCycle = "";
-      let billingStatus = "";
+      let urlChargeId = initialParams?.charge_id || "";
+      let urlPlan = initialParams?.plan || "";
+      let urlCycle = initialParams?.cycle || "";
+      let billingStatus = initialParams?.billing || "";
 
       if (typeof window !== "undefined") {
         const params = new URLSearchParams(window.location.search);
-        urlChargeId = params.get("charge_id") || "";
-        urlPlan = params.get("plan") || "";
-        urlCycle = params.get("cycle") || "";
-        billingStatus = params.get("billing") || "";
+        urlChargeId = urlChargeId || params.get("charge_id") || "";
+        urlPlan = urlPlan || params.get("plan") || "";
+        urlCycle = urlCycle || params.get("cycle") || "";
+        billingStatus = billingStatus || params.get("billing") || "";
       }
 
       let data;
@@ -163,6 +164,15 @@ export default function BillingPlans({ shopDomain = "" }) {
 
       if (data?.success && data?.subscription) {
         setSubscription(data.subscription);
+        if (billingStatus === "confirm" || billingStatus === "success" || urlChargeId) {
+          setUrlBanner({
+            tone: "success",
+            title: "Subscription Activated",
+            message: data.subscription.plan
+              ? `Your Smart Stock ${data.subscription.plan.toUpperCase()} plan is now active.`
+              : "Your plan upgrade was successfully verified and is now active.",
+          });
+        }
       } else {
         throw new Error(data?.message || "Failed to load subscription details.");
       }
@@ -174,48 +184,51 @@ export default function BillingPlans({ shopDomain = "" }) {
     } finally {
       setLoading(false);
     }
-  }, [shop]);
+  }, [shop, initialParams]);
 
   // Handle URL banners and initial fetch
   useEffect(() => {
+    let billingStatus = initialParams?.billing || "";
+    let approvedPlan = initialParams?.plan || "";
+
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
-      const billingStatus = params.get("billing");
-      const approvedPlan = params.get("plan");
+      billingStatus = billingStatus || params.get("billing");
+      approvedPlan = approvedPlan || params.get("plan");
+    }
 
-      if (billingStatus === "success" || billingStatus === "confirm") {
-        setUrlBanner({
-          tone: "success",
-          title: "Subscription Activated",
-          message: approvedPlan
-            ? `Your Smart Stock ${approvedPlan.toUpperCase()} plan is now active.`
-            : "Your plan upgrade was successfully verified and is now active.",
-        });
-      } else if (billingStatus === "free") {
-        setUrlBanner({
-          tone: "info",
-          title: "Switched to Free Plan",
-          message: "Your subscription has been switched to the Free Plan.",
-        });
-      } else if (billingStatus === "cancelled") {
-        setUrlBanner({
-          tone: "warning",
-          title: "Upgrade Cancelled",
-          message:
-            "Plan upgrade was cancelled. Your current plan remains unchanged.",
-        });
-      } else if (billingStatus === "error") {
-        setUrlBanner({
-          tone: "critical",
-          title: "Subscription Error",
-          message:
-            "Unable to verify Shopify subscription charge. Please try again.",
-        });
-      }
+    if (billingStatus === "success" || billingStatus === "confirm") {
+      setUrlBanner({
+        tone: "success",
+        title: "Subscription Activated",
+        message: approvedPlan
+          ? `Your Smart Stock ${approvedPlan.toUpperCase()} plan is now active.`
+          : "Your plan upgrade was successfully verified and is now active.",
+      });
+    } else if (billingStatus === "free") {
+      setUrlBanner({
+        tone: "info",
+        title: "Switched to Free Plan",
+        message: "Your subscription has been switched to the Free Plan.",
+      });
+    } else if (billingStatus === "cancelled") {
+      setUrlBanner({
+        tone: "warning",
+        title: "Upgrade Cancelled",
+        message:
+          "Plan upgrade was cancelled. Your current plan remains unchanged.",
+      });
+    } else if (billingStatus === "error") {
+      setUrlBanner({
+        tone: "critical",
+        title: "Subscription Error",
+        message:
+          "Unable to verify Shopify subscription charge. Please try again.",
+      });
     }
 
     loadSubscriptionData();
-  }, [loadSubscriptionData]);
+  }, [loadSubscriptionData, initialParams]);
 
   // Open upgrade modal
   const handleOpenUpgrade = (planId) => {
@@ -230,10 +243,17 @@ export default function BillingPlans({ shopDomain = "" }) {
     setUpgradeLoading(true);
     setUpgradeError(null);
     try {
+      let hostParam = initialParams?.host || "";
+      if (!hostParam && typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        hostParam = params.get("host") || "";             
+      }
+
       const result = await upgradeSubscriptionApi({
         shop,
         plan,
         billingCycle: cycle,
+        host: hostParam,
       });
 
       if (result?.confirmationUrl) {

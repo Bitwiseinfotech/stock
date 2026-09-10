@@ -46,6 +46,8 @@ export async function upgradeSubscriptionApi({
   shop = "",
   plan,
   billingCycle = "monthly",
+  host = "",
+  returnUrl = "",
 }) {
   const queryParam = shop ? `?shop=${encodeURIComponent(shop)}` : "";
   const res = await fetch(`/api/subscription/upgrade${queryParam}`, {
@@ -58,6 +60,8 @@ export async function upgradeSubscriptionApi({
       shop,
       plan,
       billingCycle,
+      host,
+      returnUrl,
     }),
   });
 

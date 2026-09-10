@@ -38,6 +38,48 @@ const getSubscription = async (req, res) => {
         const subscription =
             await getOrCreateSubscription(normalizedShop);
 
+        // Auto-check pending subscription if present
+        if (
+            subscription.billingStatus === "pending" &&
+            subscription.pendingSubscriptionId
+        ) {
+            try {
+                const store = await Store.findOne({
+                    $or: [
+                        { shop: normalizedShop },
+                        { shop: `https://${normalizedShop}` },
+                        { shop: new RegExp(`^${normalizedShop}$`, "i") },
+                    ],
+                }).lean();
+
+                if (store?.accessToken) {
+                    const appSub = await getAppSubscription({
+                        shop: normalizedShop,
+                        accessToken: store.accessToken,
+                        subscriptionId: subscription.pendingSubscriptionId,
+                    });
+
+                    if (appSub && appSub.status === "ACTIVE") {
+                        const approvedPlan = subscription.pendingPlan || "basic";
+                        subscription.plan = approvedPlan;
+                        subscription.status = "active";
+                        subscription.billingStatus = "active";
+                        subscription.shopifySubscriptionId = String(subscription.pendingSubscriptionId);
+                        subscription.pendingPlan = null;
+                        subscription.pendingSubscriptionId = null;
+                        subscription.billingStartedAt = new Date();
+                        await subscription.save();
+
+                        console.log(
+                            `[Billing] Auto-activated approved subscription for ${normalizedShop}: plan=${approvedPlan}`
+                        );
+                    }
+                }
+            } catch (autoErr) {
+                console.warn("[Billing] Auto-activation check error:", autoErr.message);
+            }
+        }
+
         // Get plan configuration
         const planLimits = PLAN_LIMITS[subscription.plan];
 
@@ -161,11 +203,50 @@ const getSubscription = async (req, res) => {
 
 const Store = require("../models/Store");
 const SHOPIFY_BILLING_PLANS = require("../config/shopifyBillingPlans");
+const shopifyGraphQL = require("../services/shopifyGraphql");
 const {
     createAppSubscription,
     getAppSubscription,
     cancelAppSubscription,
 } = require("../services/shopifyBillingService");
+
+/**
+ * Dynamically resolves the app's installation handle in Shopify Admin
+ * e.g. "smart-stock-3" on promobile-hub, "smart-stock-7" on bitwise-app, or "smart-stock".
+ */
+async function resolveAppHandle(shop, accessToken) {
+    try {
+        const store = await Store.findOne({
+            $or: [
+                { shop },
+                { shop: `https://${shop}` },
+                { shop: new RegExp(`^${shop}$`, "i") },
+            ],
+        });
+
+        if (store?.appHandle) {
+            return store.appHandle;
+        }
+
+        const token = accessToken || store?.accessToken;
+        if (token) {
+            const query = `query { currentAppInstallation { app { handle } } }`;
+            const data = await shopifyGraphQL(shop, token, query);
+            const handle = data?.currentAppInstallation?.app?.handle;
+            if (handle) {
+                if (store) {
+                    store.appHandle = handle;
+                    await store.save();
+                }
+                return handle;
+            }
+        }
+    } catch (err) {
+        console.warn(`[Billing] Failed to resolve app handle for ${shop}:`, err.message);
+    }
+
+    return process.env.SHOPIFY_APP_HANDLE || "smart-stock";
+}
 
 // =====================================================
 // UPGRADE SUBSCRIPTION (INITIATE SHOPIFY BILLING)
@@ -234,11 +315,39 @@ const upgradeSubscription = async (req, res) => {
             });
         }
 
+        // Resolve dynamic app handle (e.g. smart-stock-3 on promobile-hub)
+        const appHandle = await resolveAppHandle(normalizedShop, accessToken);
+
         // Generate return URL pointing to embedded app
-        const apiKey = process.env.SHOPIFY_API_KEY || "";
-        const returnUrl = `https://${normalizedShop}/admin/apps/${apiKey}/app/billing?billing=confirm&plan=${encodeURIComponent(
-            plan
-        )}&cycle=${encodeURIComponent(billingCycle)}`;
+        let returnUrl = req.body?.returnUrl || "";
+
+        if (!returnUrl) {
+            const hostParam = req.body?.host || req.query?.host || "";
+            if (hostParam) {
+                try {
+                    const decoded = Buffer.from(hostParam, "base64").toString("utf8");
+                    if (decoded && decoded.includes("admin.shopify.com")) {
+                        const cleanHost = decoded.replace(/\/+$/, "");
+                        if (cleanHost.includes("/apps/")) {
+                            returnUrl = `https://${cleanHost}/app/billing?billing=confirm&plan=${encodeURIComponent(
+                                plan
+                            )}&cycle=${encodeURIComponent(billingCycle)}`;
+                        } else {
+                            returnUrl = `https://${cleanHost}/apps/${appHandle}/app/billing?billing=confirm&plan=${encodeURIComponent(
+                                plan
+                            )}&cycle=${encodeURIComponent(billingCycle)}`;
+                        }
+                    }
+                } catch (_) {}
+            }
+        }
+
+        if (!returnUrl) {
+            const shopHandle = normalizedShop.replace(".myshopify.com", "");
+            returnUrl = `https://admin.shopify.com/store/${shopHandle}/apps/${appHandle}/app/billing?billing=confirm&plan=${encodeURIComponent(
+                plan
+            )}&cycle=${encodeURIComponent(billingCycle)}`;
+        }
 
         // Test mode flag
         const testMode =
@@ -311,11 +420,29 @@ const confirmSubscription = async (req, res) => {
         }).lean();
 
         const accessToken = store?.accessToken;
-        const apiKey = process.env.SHOPIFY_API_KEY || "";
 
         const subscription = await getOrCreateSubscription(normalizedShop);
 
-        const embeddedRedirectUrl = `https://${normalizedShop}/admin/apps/${apiKey}/app/billing`;
+        const appHandle = await resolveAppHandle(normalizedShop, accessToken);
+        let embeddedRedirectUrl = "";
+        const hostParam = req.query?.host || "";
+        if (hostParam) {
+            try {
+                const decoded = Buffer.from(hostParam, "base64").toString("utf8");
+                if (decoded && decoded.includes("admin.shopify.com")) {
+                    const cleanHost = decoded.replace(/\/+$/, "");
+                    if (cleanHost.includes("/apps/")) {
+                        embeddedRedirectUrl = `https://${cleanHost}/app/billing`;
+                    } else {
+                        embeddedRedirectUrl = `https://${cleanHost}/apps/${appHandle}/app/billing`;
+                    }
+                }
+            } catch (_) {}
+        }
+        if (!embeddedRedirectUrl) {
+            const shopHandle = normalizedShop.replace(".myshopify.com", "");
+            embeddedRedirectUrl = `https://admin.shopify.com/store/${shopHandle}/apps/${appHandle}/app/billing`;
+        }
 
         if (!chargeId) {
             // User cancelled / declined
@@ -377,10 +504,11 @@ const confirmSubscription = async (req, res) => {
         }
     } catch (error) {
         console.error("[Billing Confirmation Error]:", error);
-        const apiKey = process.env.SHOPIFY_API_KEY || "";
         const shop = resolveShop(req) || "";
+        const shopHandle = shop.replace(".myshopify.com", "");
+        const appHandle = await resolveAppHandle(shop, "");
         return res.redirect(
-            `https://${shop}/admin/apps/${apiKey}/app/billing?billing=error`
+            `https://admin.shopify.com/store/${shopHandle}/apps/${appHandle}/app/billing?billing=error`
         );
     }
 };
