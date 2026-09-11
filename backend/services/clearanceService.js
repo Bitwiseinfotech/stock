@@ -269,20 +269,28 @@ async function createClearanceSale(
     }
 
     const nowDt = DateTime.now().setZone(shopTimezone);
-    // If merchant set the sale for today and it's within 15 minutes of now or earlier today, activate immediately
-    const isToday = startDt.hasSame(nowDt, "day");
-    if (isToday && startDt <= nowDt.plus({ minutes: 15 })) {
-      startDt = nowDt;
-    } else if (startDt.startOf("day") < nowDt.startOf("day")) {
+
+    // If start date is on a day before today, reject
+    if (startDt.startOf("day") < nowDt.startOf("day")) {
       throw new Error("Start date cannot be in the past.");
     }
 
-    let endDt;
-    if (endDate) {
-      endDt = DateTime.fromISO(String(endDate), { zone: shopTimezone });
+    // Determine whether this sale is scheduled for the future or active immediately.
+    // If startDt > nowDt, it is a future scheduled sale and will go live at the selected time.
+    // If startDt <= nowDt, the selected time is now or earlier today, so it activates immediately.
+    const isFuture = startDt > nowDt;
+    const status = isFuture ? "SCHEDULED" : "ACTIVE";
+
+    // If the time is already in the past today, adjust startDt to nowDt for Shopify discount creation
+    if (!isFuture) {
+      startDt = nowDt;
     }
-    if ((!endDt || !endDt.isValid) && durationDays && Number(durationDays) > 0) {
+
+    let endDt;
+    if (durationDays && Number(durationDays) > 0) {
       endDt = startDt.plus({ days: Number(durationDays) });
+    } else if (endDate) {
+      endDt = DateTime.fromISO(String(endDate), { zone: shopTimezone });
     }
     if (!endDt || !endDt.isValid || endDt <= startDt) {
       throw new Error("End date must be after the start date.");
@@ -333,8 +341,6 @@ async function createClearanceSale(
       throw new Error(result.message || "Shopify did not create the clearance discount.");
     }
     createdDiscountId = result.discountId;
-
-    const status = startDt > nowDt ? "SCHEDULED" : "ACTIVE";
     let sale;
     if (existingSale) {
       existingSale.shopifyDiscountId = result.discountId;

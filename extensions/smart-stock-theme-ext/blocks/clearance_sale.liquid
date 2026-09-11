@@ -401,7 +401,11 @@
         : null;
 
 
-    if (!sale || !sale.hasClearance) {
+    if (
+      !sale ||
+      !sale.hasClearance ||
+      (sale.startsAt && new Date(sale.startsAt).getTime() > Date.now())
+    ) {
       return null;
     }
 
@@ -757,7 +761,8 @@
 
     if (
       !sale ||
-      !sale.hasClearance
+      !sale.hasClearance ||
+      (sale.startsAt && new Date(sale.startsAt).getTime() > Date.now())
     ) {
       removeRenderedClearance();
       return;
@@ -969,7 +974,9 @@
       var raw = sessionStorage.getItem(cacheKey);
       if (raw) {
         var parsed = JSON.parse(raw);
-        if (parsed && parsed.data && parsed.data.deadStockOffer && parsed.data.deadStockOffer.hasClearance && (Date.now() - (parsed.time || 0) < 60000)) {
+        var cachedOffer = parsed && parsed.data && parsed.data.deadStockOffer;
+        var isCachedValid = cachedOffer && cachedOffer.hasClearance && (!cachedOffer.startsAt || new Date(cachedOffer.startsAt).getTime() <= Date.now());
+        if (isCachedValid && (Date.now() - (parsed.time || 0) < 60000)) {
           renderSale(parsed.data);
         } else {
           sessionStorage.removeItem(cacheKey);
@@ -1012,13 +1019,31 @@
         return response.json();
       })
       .then(function (data) {
+        var futureStartsAt = null;
+        if (data && data.deadStockOffer) {
+          if (!data.deadStockOffer.hasClearance && data.deadStockOffer.scheduledClearance && data.deadStockOffer.scheduledClearance.startsAt) {
+            futureStartsAt = data.deadStockOffer.scheduledClearance.startsAt;
+          } else if (data.deadStockOffer.startsAt && new Date(data.deadStockOffer.startsAt).getTime() > Date.now()) {
+            futureStartsAt = data.deadStockOffer.startsAt;
+          }
+        }
+
         try {
-          if (!data || !data.progressiveMarkdown || !data.progressiveMarkdown.enabled) {
+          if (!futureStartsAt && (!data || !data.progressiveMarkdown || !data.progressiveMarkdown.enabled)) {
             sessionStorage.setItem(cacheKey, JSON.stringify({ data: data, time: Date.now() }));
           } else {
             sessionStorage.removeItem(cacheKey);
           }
         } catch (_) {}
+
+        if (futureStartsAt) {
+          var msUntil = new Date(futureStartsAt).getTime() - Date.now();
+          if (msUntil > 0 && msUntil <= 24 * 60 * 60 * 1000) {
+            setTimeout(function () {
+              loadSale(variantId);
+            }, msUntil + 1000);
+          }
+        }
 
         /*
          * Shopify can render dynamic checkout

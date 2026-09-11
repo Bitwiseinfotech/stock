@@ -335,7 +335,12 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
         title: `Clearance ${clearanceDiscount}% Off - ${product?.title}`,
       });
 
-      setActionSuccess(`✓ Clearance Sale ${isEdit ? "Updated" : "Created"}! ${result.discountPercent || discount}% automatic discount has been created in Shopify.`);
+      const wasScheduled = result.sale?.status === "SCHEDULED" || (result.startsAt && new Date(result.startsAt).getTime() > Date.now());
+      if (wasScheduled) {
+        setActionSuccess(`✓ Clearance Sale ${isEdit ? "Updated" : "Scheduled"}! It will automatically go live on your storefront at ${clearanceStartTime || "the scheduled time"}.`);
+      } else {
+        setActionSuccess(`✓ Clearance Sale ${isEdit ? "Updated" : "Created"}! ${result.discountPercent || discount}% automatic discount has been created in Shopify and is now active.`);
+      }
       closeModal();
       await loadDetail();
     } catch (err) {
@@ -566,11 +571,17 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
   const formattedSellingPrice = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(sellingPrice);
   const formattedCompareAt = compareAtPrice > 0 ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(compareAtPrice) : null;
   const formattedStockValue = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(stockValue);
-  const isClearanceActive = Boolean(
+  const isClearanceScheduled = Boolean(
     product?.activeClearanceSale &&
-      (product.activeClearanceSale.status === "ACTIVE" ||
-        product.activeClearanceSale.status === "SCHEDULED")
+      (product.activeClearanceSale.status === "SCHEDULED" ||
+        (product.activeClearanceSale.startDate && new Date(product.activeClearanceSale.startDate).getTime() > Date.now()))
   );
+  const isClearanceLive = Boolean(
+    product?.activeClearanceSale &&
+      product.activeClearanceSale.status === "ACTIVE" &&
+      !isClearanceScheduled
+  );
+  const isClearanceActive = isClearanceLive || isClearanceScheduled;
 
   return (
     <Page
@@ -583,9 +594,14 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
           <Badge tone={daysUnsold >= 60 ? "critical" : "warning"}>
             {daysUnsold >= 60 ? "🚨 Dead Stock (60+ days)" : `${daysUnsold} Days Unsold`}
           </Badge>
-          {isClearanceActive && (
+          {isClearanceLive && (
             <Badge tone="success">
               Clearance Active ({product.activeClearanceSale?.discountValue || 20}% OFF)
+            </Badge>
+          )}
+          {isClearanceScheduled && (
+            <Badge tone="info">
+              Clearance Scheduled ({product.activeClearanceSale?.discountValue || 20}% OFF)
             </Badge>
           )}
           {product?.activeBundle && (
@@ -741,8 +757,8 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
                     <Text variant="headingSm" as="h3" fontWeight="semibold">
                       Clearance Sale
                     </Text>
-                    <Badge tone={isClearanceActive ? "success" : "subdued"}>
-                      {isClearanceActive ? "● Enabled" : "○ Not Configured"}
+                    <Badge tone={isClearanceLive ? "success" : isClearanceScheduled ? "info" : "subdued"}>
+                      {isClearanceLive ? "● Active" : isClearanceScheduled ? "🕒 Scheduled" : "○ Not Configured"}
                     </Badge>
                   </InlineStack>
 
@@ -801,7 +817,7 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
                         variant="plain"
                         onClick={(e) => {
                           e.stopPropagation();
-                          navigate("/app/customization/clearance-sale");
+                          navigate("/app/customization/clearance-sale");              
                         }}
                       >
                         Customize
@@ -893,7 +909,7 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
                       <strong>{log.actionType}</strong> — {new Date(log.createdAt).toLocaleString()}
                       {log.error && <div style={{ color: "#EF4444", marginTop: "2px" }}>Error: {log.error}</div>}
                     </div>
-                    <Badge tone={log.status === "COMPLETED" || log.status === "ACTIVE" ? "success" : "critical"}>
+                    <Badge tone={log.status === "COMPLETED" || log.status === "ACTIVE" ? "success" : log.status === "SCHEDULED" ? "info" : "critical"}>
                       {log.status}
                     </Badge>
                   </div>
@@ -1036,7 +1052,7 @@ export default function DeadStockProduct({ variantId: propVariantId, shop = "", 
                 onBlur={() => validateClearanceField("startTime", clearanceStartTime)}
                 error={clearanceErrors.startTime}
                 autoComplete="off"
-                helpText="Example: 10:30 AM"
+              
               />
             
             </FormLayout>

@@ -523,7 +523,8 @@
 
     if (
       !sale ||
-      !sale.hasClearance
+      !sale.hasClearance ||
+      (sale.startsAt && new Date(sale.startsAt).getTime() > Date.now())
     ) {
       document
         .querySelectorAll(
@@ -1666,9 +1667,10 @@
     }
 
     const deadOffer = data?.deadStockOffer;
-    const bundleIsActive = deadOffer?.hasBundle && !deadOffer?.hasClearance;
+    const isClearanceTimeValid = deadOffer?.hasClearance && (!deadOffer?.startsAt || new Date(deadOffer.startsAt).getTime() <= Date.now());
+    const bundleIsActive = deadOffer?.hasBundle && !isClearanceTimeValid;
     const hasActiveMarkdown = Boolean(data?.progressiveMarkdown?.enabled && Number(data.progressiveMarkdown.currentDiscount) > 0);
-    const hasActiveClearance = Boolean(deadOffer?.hasClearance && Number(deadOffer.discountPercent) > 0);
+    const hasActiveClearance = Boolean(isClearanceTimeValid && Number(deadOffer.discountPercent) > 0);
 
     // If a bundle is active OR if neither markdown nor clearance is active,
     // do NOT inject ANY sale or markdown badges or price overrides.
@@ -2040,7 +2042,18 @@
         };
       }
 
-      if (!data?.deadStockOffer?.hasClearance && !data?.deadStockOffer?.hasBundle) {
+      let futureStartsAt = null;
+      if (data?.deadStockOffer) {
+        if (!data.deadStockOffer.hasClearance && data.deadStockOffer.scheduledClearance && data.deadStockOffer.scheduledClearance.startsAt) {
+          futureStartsAt = data.deadStockOffer.scheduledClearance.startsAt;
+        } else if (data.deadStockOffer.startsAt && new Date(data.deadStockOffer.startsAt).getTime() > Date.now()) {
+          futureStartsAt = data.deadStockOffer.startsAt;
+        }
+      }
+
+      const isClearanceLive = data?.deadStockOffer?.hasClearance && (!data.deadStockOffer.startsAt || new Date(data.deadStockOffer.startsAt).getTime() <= Date.now());
+
+      if ((!isClearanceLive && !data?.deadStockOffer?.hasBundle) || futureStartsAt) {
         try {
           sessionStorage.removeItem(cacheKey);
         } catch (_) {}
@@ -2053,6 +2066,15 @@
         try {
           sessionStorage.setItem(cacheKey, JSON.stringify({ data: data, time: Date.now() }));
         } catch (_) {}
+      }
+
+      if (futureStartsAt) {
+        const msUntil = new Date(futureStartsAt).getTime() - Date.now();
+        if (msUntil > 0 && msUntil <= 24 * 60 * 60 * 1000) {
+          setTimeout(() => {
+            renderBundles();
+          }, msUntil + 1000);
+        }
       }
 
       /* -----------------------------------------------

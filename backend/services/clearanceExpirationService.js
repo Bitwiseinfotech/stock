@@ -26,7 +26,13 @@ async function processClearanceSales(now = new Date()) {
       { $set: { status: "ACTIVE" } },
       { returnDocument: "after" }
     ).lean();
-    if (updated) await updateSaleActionStatus(updated, "ACTIVE");
+    if (updated) {
+      await updateSaleActionStatus(updated, "ACTIVE");
+      try {
+        const { clearStorefrontCache } = require("../controllers/storefrontController");
+        if (typeof clearStorefrontCache === "function") clearStorefrontCache(updated.shop);
+      } catch (_) {}
+    }
   }
 
   const expiredSales = await ClearanceSale.find({
@@ -40,7 +46,13 @@ async function processClearanceSales(now = new Date()) {
       { $set: { status: "EXPIRED" } },
       { returnDocument: "after" }
     ).lean();
-    if (updated) await updateSaleActionStatus(updated, "EXPIRED");
+    if (updated) {
+      await updateSaleActionStatus(updated, "EXPIRED");
+      try {
+        const { clearStorefrontCache } = require("../controllers/storefrontController");
+        if (typeof clearStorefrontCache === "function") clearStorefrontCache(updated.shop);
+      } catch (_) {}
+    }
   }
 
   return { activated: scheduledSales.length, expired: expiredSales.length };

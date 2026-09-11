@@ -144,17 +144,17 @@ async function getProductWidgetData(req, res) {
     const cleanShopDomain = String(shopId || "").replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
     const shopCandidates = Array.from(new Set([shopId, cleanShopDomain, store?.shop].filter(Boolean)));
 
-    ClearanceSale.updateMany(
+    await ClearanceSale.updateMany(
       {
         shop: { $in: shopCandidates },
         status: "SCHEDULED",
-        startDate: { $lte: new Date(now.getTime() + 60000) },
+        startDate: { $lte: now },
         endDate: { $gt: now },
       },
       { $set: { status: "ACTIVE" } }
     ).catch(() => { });
 
-    ClearanceSale.updateMany(
+    await ClearanceSale.updateMany(
       {
         shop: { $in: shopCandidates },
         status: { $in: ["SCHEDULED", "ACTIVE"] },
@@ -162,16 +162,6 @@ async function getProductWidgetData(req, res) {
       },
       { $set: { status: "EXPIRED" } }
     ).catch(() => { });
-
-    const clearanceQuery = {
-      shop: { $in: shopCandidates },
-      active: true,
-      $or: [
-        { status: "ACTIVE" },
-        { status: "SCHEDULED", startDate: { $lte: new Date(now.getTime() + 60000) } },
-      ],
-      endDate: { $gt: now },
-    };
 
     const idConditions = [];
     if (cleanVarId) {
@@ -189,12 +179,34 @@ async function getProductWidgetData(req, res) {
       );
     }
 
+    const clearanceQuery = {
+      shop: { $in: shopCandidates },
+      active: true,
+      status: { $in: ["ACTIVE", "SCHEDULED"] },
+      startDate: { $lte: now },
+      endDate: { $gt: now },
+    };
+
     if (idConditions.length > 0) {
       clearanceQuery.$and = [{ $or: idConditions }];
     }
 
     const clearanceSale = await ClearanceSale.findOne(clearanceQuery)
       .sort({ createdAt: -1 }).lean().catch(() => null);
+
+    let scheduledClearanceSale = null;
+    if (!clearanceSale && idConditions.length > 0) {
+      const scheduledQuery = {
+        shop: { $in: shopCandidates },
+        active: true,
+        status: "SCHEDULED",
+        startDate: { $gt: now },
+        endDate: { $gt: now },
+        $and: [{ $or: idConditions }],
+      };
+      scheduledClearanceSale = await ClearanceSale.findOne(scheduledQuery)
+        .sort({ startDate: 1 }).lean().catch(() => null);
+    }
 
     const originalPrice = shopifyPrice == null
       ? clearanceSale?.originalPrice ?? null
@@ -641,6 +653,10 @@ async function getProductWidgetData(req, res) {
       progressiveMarkdown: activeMarkdownData,
       deadStockOffer: {
         hasClearance: Boolean(hasClearanceOffer && isClearanceGloballyEnabled),
+        scheduledClearance: scheduledClearanceSale ? {
+          startsAt: scheduledClearanceSale.startDate,
+          discountPercent: Number(scheduledClearanceSale.discountValue ?? scheduledClearanceSale.discountPercent ?? 0),
+        } : null,
         productId: hasClearanceOffer ? (clearanceSale?.productId || cleanProdId || null) : null,
         saleVariantId: hasClearanceOffer ? (clearanceSale?.variantId || cleanVarId || null) : null,
         discountPercent: hasClearanceOffer ? finalDiscountVal : 0,
@@ -648,7 +664,7 @@ async function getProductWidgetData(req, res) {
         originalPrice: hasClearanceOffer ? origPriceNum : null,
         salePrice: hasClearanceOffer ? calcSalePrice : null,
         savings: hasClearanceOffer ? calcSavings : null,
-        startsAt: hasClearanceOffer ? (clearanceSale?.startDate || null) : null,
+        startsAt: hasClearanceOffer ? (clearanceSale?.startDate || null) : (scheduledClearanceSale?.startDate || null),
         endsAt: hasClearanceOffer ? (clearanceSale?.endDate || null) : null,
         hasBundle: isRealBundleActive,
         bundleName: isRealBundleActive ? (activeBundle?.bundleName || "Bundle Offer") : "",
@@ -657,7 +673,7 @@ async function getProductWidgetData(req, res) {
       },
     };
 
-    if (!activeMarkdownData || !activeMarkdownData.enabled) {
+    if ((!activeMarkdownData || !activeMarkdownData.enabled) && !scheduledClearanceSale) {
       setStorefrontCache(cacheKey, responsePayload);
     }
     res.set("Cache-Control", "no-cache, no-store, must-revalidate");
