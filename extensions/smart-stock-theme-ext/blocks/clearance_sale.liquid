@@ -117,6 +117,115 @@
 
 
   /* ============================================================
+     STOREFRONT PRODUCT PRICE OVERRIDE (BLUR REAL PRICE + SHOW DISCOUNT PRICE & BADGE)
+     ============================================================ */
+
+  function restoreStorefrontProductPrice() {
+    try {
+      var priceContainers = document.querySelectorAll(
+        ".product__info-container .price, .product-single__meta .price, .product-info .price, .product__price, [data-product-price-container], .price"
+      );
+      priceContainers.forEach(function (priceContainer) {
+        var wrapper = priceContainer.querySelector('[data-smart-stock-clearance-price-display="true"]');
+        if (wrapper) {
+          wrapper.remove();
+        }
+        var hiddenItems = priceContainer.querySelectorAll('[data-smart-stock-hidden-clearance-price="true"]');
+        hiddenItems.forEach(function (el) {
+          el.style.removeProperty("display");
+          el.removeAttribute("data-smart-stock-hidden-clearance-price");
+        });
+      });
+    } catch (_) {}
+  }
+
+  function updateStorefrontProductPrice(originalPrice, salePrice, discountPercent) {
+    if (!originalPrice || !salePrice || Number(originalPrice) <= Number(salePrice)) {
+      restoreStorefrontProductPrice();
+      return;
+    }
+
+    try {
+      var priceContainers = document.querySelectorAll(
+        ".product__info-container .price, .product-single__meta .price, .product-info .price, .product__price, [data-product-price-container], .price"
+      );
+
+      if (!priceContainers || priceContainers.length === 0) return;
+
+      var origNum = Number(originalPrice);
+      var saleNum = Number(salePrice);
+      var discNum = Number(discountPercent) || Math.round(((origNum - saleNum) / origNum) * 100);
+
+      priceContainers.forEach(function (priceContainer) {
+        var existingText = priceContainer.textContent || "";
+        var suffixMatch = existingText.trim().match(/([A-Z]{3})$/);
+        var currencySuffix = suffixMatch ? " " + suffixMatch[1] : "";
+
+        var formattedOrig = formatMoney(origNum);
+        if (currencySuffix && formattedOrig.indexOf(currencySuffix.trim()) === -1) {
+          formattedOrig += currencySuffix;
+        }
+
+        var formattedSale = formatMoney(saleNum);
+        if (currencySuffix && formattedSale.indexOf(currencySuffix.trim()) === -1) {
+          formattedSale += currencySuffix;
+        }
+
+        var badgeText = discNum > 0 ? (discNum + "% OFF") : "SALE";
+
+        var existingWrapper = priceContainer.querySelector('[data-smart-stock-clearance-price-display="true"]');
+        if (!existingWrapper) {
+          existingWrapper = document.createElement("div");
+          existingWrapper.setAttribute("data-smart-stock-clearance-price-display", "true");
+          existingWrapper.style.cssText = "display:inline-flex !important; align-items:baseline !important; gap:8px !important; flex-wrap:wrap !important; vertical-align:middle !important; margin-bottom:4px !important;";
+
+          var container = priceContainer.querySelector(".price__container") || priceContainer;
+          var reg = container.querySelector(".price__regular");
+          var sale = container.querySelector(".price__sale");
+          if (reg) {
+            reg.style.setProperty("display", "none", "important");
+            reg.setAttribute("data-smart-stock-hidden-clearance-price", "true");
+          }
+          if (sale) {
+            sale.style.setProperty("display", "none", "important");
+            sale.setAttribute("data-smart-stock-hidden-clearance-price", "true");
+          }
+          if (!reg && !sale) {
+            var items = container.querySelectorAll(".price-item");
+            items.forEach(function (it) {
+              it.style.setProperty("display", "none", "important");
+              it.setAttribute("data-smart-stock-hidden-clearance-price", "true");
+            });
+          }
+          container.prepend(existingWrapper);
+        }
+
+        existingWrapper.innerHTML =
+          '<s class="smart-stock-blur-price" style="text-decoration:line-through !important; filter:blur(0.5px) !important; -webkit-filter:blur(0.5px) !important; opacity:0.55 !important; color:#6b7280 !important; font-size:0.9em !important; font-weight:400 !important; margin-right:4px !important;">' +
+            formattedOrig +
+          '</s>' +
+          '<strong class="smart-stock-discount-price" style="font-weight:700 !important; color:#111827 !important; font-size:1.15em !important; margin-right:6px !important;">' +
+            formattedSale +
+          '</strong>' +
+          '<span class="smart-stock-discount-badge" style="display:inline-flex !important; align-items:center !important; gap:4px !important; padding:3px 8px !important; font-size:12px !important; font-weight:700 !important; background-color:#fee2e2 !important; color:#b91c1c !important; border:1px solid #fca5a5 !important; border-radius:9999px !important; vertical-align:middle !important; line-height:1.2 !important;">' +
+            '🔥 ' + badgeText +
+          '</span>';
+
+        var themeBadges = priceContainer.querySelectorAll(".price__badge-sale, .badge");
+        themeBadges.forEach(function (b) {
+          if (!b.closest('[data-smart-stock-clearance-price-display]')) {
+            b.style.setProperty("display", "none", "important");
+            b.setAttribute("data-smart-stock-hidden-clearance-price", "true");
+          }
+        });
+      });
+    } catch (e) {
+      console.warn("[SmartStock] Error updating storefront price:", e);
+    }
+  }
+
+
+  /* ============================================================
      REMOVE OLD CLEARANCE ELEMENTS
      ============================================================ */
 
@@ -128,6 +237,8 @@
     oldElements.forEach(function (element) {
       element.remove();
     });
+
+    restoreStorefrontProductPrice();
   }
 
 
@@ -952,7 +1063,13 @@
      * Insert
      */
 
-    return insertClearance(element);
+    var inserted = insertClearance(element);
+
+    if (sale && sale.originalPrice && sale.salePrice && Number(sale.originalPrice) > Number(sale.salePrice)) {
+      updateStorefrontProductPrice(sale.originalPrice, sale.salePrice, sale.discountPercent);
+    }
+
+    return inserted;
   }
 
 

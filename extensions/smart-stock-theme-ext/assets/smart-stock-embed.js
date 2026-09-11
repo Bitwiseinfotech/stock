@@ -826,8 +826,8 @@
       element
     );
 
-    if (sale.originalPrice && sale.salePrice && sale.originalPrice > sale.salePrice) {
-      updateStorefrontProductPrice(sale.originalPrice, sale.salePrice);
+    if (sale.originalPrice && sale.salePrice && Number(sale.originalPrice) > Number(sale.salePrice)) {
+      updateStorefrontProductPrice(sale.originalPrice, sale.salePrice, sale.discountPercent);
     }
   }
 
@@ -839,9 +839,18 @@
   function restoreStorefrontProductPrice() {
     try {
       const priceContainers = document.querySelectorAll(
-        ".product__info-container .price, .product-single__meta .price, .product-info .price, .product__price, .price"
+        ".product__info-container .price, .product-single__meta .price, .product-info .price, .product__price, [data-product-price-container], .price"
       );
       priceContainers.forEach((priceContainer) => {
+        const customWrapper = priceContainer.querySelector('[data-smart-stock-clearance-price-display="true"]');
+        if (customWrapper) customWrapper.remove();
+
+        const hiddenItems = priceContainer.querySelectorAll('[data-smart-stock-hidden-clearance-price="true"]');
+        hiddenItems.forEach((el) => {
+          el.style.removeProperty("display");
+          el.removeAttribute("data-smart-stock-hidden-clearance-price");
+        });
+
         if (priceContainer.dataset.smartStockOriginalHtml) {
           priceContainer.innerHTML = priceContainer.dataset.smartStockOriginalHtml;
           delete priceContainer.dataset.smartStockOriginalHtml;
@@ -855,46 +864,84 @@
      UPDATE TOP STOREFRONT PRICE ON SALE / DISCOUNT
      ========================================================= */
 
-  function updateStorefrontProductPrice(originalPrice, salePrice) {
-    if (!originalPrice || !salePrice || originalPrice <= salePrice) {
+  function updateStorefrontProductPrice(originalPrice, salePrice, discountPercent) {
+    if (!originalPrice || !salePrice || Number(originalPrice) <= Number(salePrice)) {
       restoreStorefrontProductPrice();
       return;
     }
 
     try {
       const priceContainers = document.querySelectorAll(
-        ".product__info-container .price, .product-single__meta .price, .product-info .price, .product__price, .price"
+        ".product__info-container .price, .product-single__meta .price, .product-info .price, .product__price, [data-product-price-container], .price"
       );
 
+      const origNum = Number(originalPrice);
+      const saleNum = Number(salePrice);
+      const discNum = Number(discountPercent) || Math.round(((origNum - saleNum) / origNum) * 100);
+
       priceContainers.forEach((priceContainer) => {
-        if (!priceContainer.dataset.smartStockOriginalHtml) {
-          priceContainer.dataset.smartStockOriginalHtml = priceContainer.innerHTML;
-        }
-        priceContainer.classList.add("price--on-sale", "price--show-badge");
+        const existingText = priceContainer.textContent || "";
+        const suffixMatch = existingText.trim().match(/([A-Z]{3})$/);
+        const currencySuffix = suffixMatch ? " " + suffixMatch[1] : "";
 
-        const salePriceFormatted = formatMoney(salePrice);
-        const origPriceFormatted = formatMoney(originalPrice);
-
-        // Dawn / Standard themes with .price__sale
-        const regularItem = priceContainer.querySelector(".price__sale .price-item--regular, .price__sale s, s.price-item");
-        const saleItem = priceContainer.querySelector(".price-item--sale, .price-item.price-item--sale, .price-item--last");
-
-        if (regularItem) {
-          regularItem.textContent = origPriceFormatted;
-        }
-        if (saleItem) {
-          saleItem.textContent = salePriceFormatted;
+        let origFormatted = formatMoney(origNum);
+        if (currencySuffix && !origFormatted.includes(currencySuffix.trim())) {
+          origFormatted += currencySuffix;
         }
 
-        // If only .price__regular is present, update its contents
-        const regularContainer = priceContainer.querySelector(".price__regular");
-        const saleContainer = priceContainer.querySelector(".price__sale");
-        if (regularContainer && (!saleContainer || window.getComputedStyle(saleContainer).display === "none")) {
-          regularContainer.innerHTML = `
-            <s style="opacity:0.65; margin-right:8px; font-weight:normal;">${origPriceFormatted}</s>
-            <strong style="color:#DC2626; font-weight:700;">${salePriceFormatted}</strong>
-          `;
+        let saleFormatted = formatMoney(saleNum);
+        if (currencySuffix && !saleFormatted.includes(currencySuffix.trim())) {
+          saleFormatted += currencySuffix;
         }
+
+        const badgeText = discNum > 0 ? `${discNum}% OFF` : "SALE";
+
+        let customWrapper = priceContainer.querySelector('[data-smart-stock-clearance-price-display="true"]');
+        if (!customWrapper) {
+          customWrapper = document.createElement("div");
+          customWrapper.setAttribute("data-smart-stock-clearance-price-display", "true");
+          customWrapper.style.cssText = "display:inline-flex !important; align-items:baseline !important; gap:8px !important; flex-wrap:wrap !important; vertical-align:middle !important; margin-bottom:4px !important;";
+
+          const container = priceContainer.querySelector(".price__container") || priceContainer;
+          const reg = container.querySelector(".price__regular");
+          const sale = container.querySelector(".price__sale");
+          if (reg) {
+            reg.style.setProperty("display", "none", "important");
+            reg.setAttribute("data-smart-stock-hidden-clearance-price", "true");
+          }
+          if (sale) {
+            sale.style.setProperty("display", "none", "important");
+            sale.setAttribute("data-smart-stock-hidden-clearance-price", "true");
+          }
+          if (!reg && !sale) {
+            const items = container.querySelectorAll(".price-item");
+            items.forEach((it) => {
+              it.style.setProperty("display", "none", "important");
+              it.setAttribute("data-smart-stock-hidden-clearance-price", "true");
+            });
+          }
+          container.prepend(customWrapper);
+        }
+
+        customWrapper.innerHTML = `
+          <s class="smart-stock-blur-price" style="text-decoration:line-through !important; filter:blur(0.5px) !important; -webkit-filter:blur(0.5px) !important; opacity:0.55 !important; color:#6b7280 !important; font-size:0.9em !important; font-weight:400 !important; margin-right:4px !important;">
+            ${escapeHtml(origFormatted)}
+          </s>
+          <strong class="smart-stock-discount-price" style="font-weight:700 !important; color:#111827 !important; font-size:1.15em !important; margin-right:6px !important;">
+            ${escapeHtml(saleFormatted)}
+          </strong>
+          <span class="smart-stock-discount-badge" style="display:inline-flex !important; align-items:center !important; gap:4px !important; padding:3px 8px !important; font-size:12px !important; font-weight:700 !important; background-color:#fee2e2 !important; color:#b91c1c !important; border:1px solid #fca5a5 !important; border-radius:9999px !important; vertical-align:middle !important; line-height:1.2 !important;">
+            🔥 ${escapeHtml(badgeText)}
+          </span>
+        `;
+
+        const themeBadges = priceContainer.querySelectorAll(".price__badge-sale, .badge");
+        themeBadges.forEach((b) => {
+          if (!b.closest('[data-smart-stock-clearance-price-display]')) {
+            b.style.setProperty("display", "none", "important");
+            b.setAttribute("data-smart-stock-hidden-clearance-price", "true");
+          }
+        });
       });
     } catch (e) {
       console.warn("[SmartStock] Error updating price container:", e);
@@ -1536,7 +1583,7 @@
             }
           }, 450);
         } catch (error) {
-          console.error(
+          console.error(              
             "[Smart Stock Bundle] Error adding to cart:",
             error
           );
@@ -1654,7 +1701,11 @@
 
   function updateThemeSaleBadges(data) {
     const cfg = data?.markdownConfig || data?.progressiveMarkdown?.config || {};
-    if (cfg.enabled === false) {
+    const deadOffer = data?.deadStockOffer;
+    const isClearanceTimeValid = deadOffer?.hasClearance && (!deadOffer?.startsAt || new Date(deadOffer.startsAt).getTime() <= Date.now());
+    const hasActiveClearance = Boolean(isClearanceTimeValid && Number(deadOffer.discountPercent) > 0);
+
+    if (cfg.enabled === false && !hasActiveClearance) {
       document
         .querySelectorAll('[data-smart-stock-progressive-markdown], [data-smart-stock-price-display]')
         .forEach((el) => el.remove());
@@ -1666,11 +1717,8 @@
       return;
     }
 
-    const deadOffer = data?.deadStockOffer;
-    const isClearanceTimeValid = deadOffer?.hasClearance && (!deadOffer?.startsAt || new Date(deadOffer.startsAt).getTime() <= Date.now());
     const bundleIsActive = deadOffer?.hasBundle && !isClearanceTimeValid;
     const hasActiveMarkdown = Boolean(data?.progressiveMarkdown?.enabled && Number(data.progressiveMarkdown.currentDiscount) > 0);
-    const hasActiveClearance = Boolean(isClearanceTimeValid && Number(deadOffer.discountPercent) > 0);
 
     // If a bundle is active OR if neither markdown nor clearance is active,
     // do NOT inject ANY sale or markdown badges or price overrides.
@@ -1847,12 +1895,12 @@
       }
 
       priceDisplayWrapper.innerHTML = `
-        <s class="price-item price-item--regular" style="text-decoration: line-through !important; color: #6b7280 !important; font-size: 0.95em !important; opacity: 0.75 !important; font-weight: 400 !important; margin-right: 2px !important;">
+        <s class="price-item price-item--regular" style="text-decoration: line-through !important; filter: blur(0.5px) !important; -webkit-filter: blur(0.5px) !important; color: #6b7280 !important; font-size: 0.9em !important; opacity: 0.55 !important; font-weight: 400 !important; margin-right: 4px !important;">
           ${escapeHtml(originalFormatted)}
         </s>
-        <span class="price-item price-item--sale" style="font-weight: 700 !important; color: #111827 !important; font-size: 1.05em !important;">
+        <strong class="price-item price-item--sale" style="font-weight: 700 !important; color: #111827 !important; font-size: 1.15em !important; margin-right: 6px !important;">
           ${escapeHtml(saleFormatted)}
-        </span>
+        </strong>
       `;
     } else {
       // If bundle is active or no discount, clean up custom price display

@@ -1,5 +1,8 @@
 const mongoose = require("mongoose");
 const ClearanceSaleConfig = require("../models/ClearanceSaleConfig");
+const ClearanceSale = require("../models/ClearanceSale");
+const Store = require("../models/Store");
+const clearanceService = require("../services/clearanceService");
 const connectDB = require("../config/mongodb");
 
 async function ensureConnected() {
@@ -173,6 +176,45 @@ async function updateClearanceSaleConfig(req, res) {
       { $set: sanitized },
       { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
     ).lean();
+
+    // Synchronize Shopify automatic discounts with the enabled state
+    (async () => {
+      try {
+        const headerToken = req.headers["x-shopify-access-token"];
+        const store = await Store.findOne({
+          $or: [{ shop: shopId }, { shop: rawShop }, { shop: new RegExp(`^${shopId}$`, "i") }],
+        }).lean();
+        const accessToken = headerToken || store?.accessToken;
+
+        if (accessToken) {
+          const shopCandidates = [shopId, rawShop].filter(Boolean);
+          const activeSales = await ClearanceSale.find({
+            shop: { $in: shopCandidates },
+            status: { $in: ["ACTIVE", "SCHEDULED"] },
+            shopifyDiscountId: { $exists: true, $ne: "" },
+          }).lean();
+
+          for (const sale of activeSales) {
+            if (sanitized.enabled === false) {
+              await clearanceService.deactivateClearanceDiscount(
+                store?.shop || shopId,
+                accessToken,
+                sale.shopifyDiscountId
+              );
+            } else {
+              // When re-enabled, activate back
+              await clearanceService.activateClearanceDiscount(
+                store?.shop || shopId,
+                accessToken,
+                sale.shopifyDiscountId
+              );
+            }
+          }
+        }
+      } catch (syncErr) {
+        console.warn("[Customization] Failed to sync Shopify discounts for clearance toggle:", syncErr.message);
+      }
+    })();
 
     safeClearStorefrontCache(shopId);
 

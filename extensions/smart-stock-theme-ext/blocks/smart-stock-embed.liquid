@@ -1,18 +1,16 @@
-{% if block.settings.enabled %}
-
-  <script>
-    (function() {
-      try {
-        var filterDeprecation = function(origFn) {
-          if (!origFn) return origFn;
-          return function() {
-            var msg = "";
-            for (var i = 0; i < arguments.length; i++) {
-              try {
-                var it = arguments[i];
-                msg += " " + (typeof it === "object" ? (it && it.message ? it.message : JSON.stringify(it)) : String(it));
-              } catch (_) {
-                msg += " " + String(arguments[i]);
+<script>
+  (function() {
+    try {
+      var filterDeprecation = function(origFn) {
+        if (!origFn) return origFn;
+        return function() {
+          var msg = "";
+          for (var i = 0; i < arguments.length; i++) {
+            try {
+              var it = arguments[i];
+              msg += " " + (typeof it === "object" ? (it && it.message ? it.message : JSON.stringify(it)) : String(it));
+            } catch (_) {
+              msg += " " + String(arguments[i]);
               }
             }
             if (
@@ -114,19 +112,11 @@
   <!-- Launch Pre-Order Assets -->
   <link rel="stylesheet" href="{{ 'launch-preorder.css' | asset_url }}">
   <script src="{{ 'launch-preorder.js' | asset_url }}" defer></script>
-{% endif %}
 
 {% schema %}
 {
   "name": "Smart Stock",
   "target": "head",
-  "settings": [
-    {         
-      "type": "checkbox",
-      "id": "enabled",
-      "label": "Smart Stock — Enable storefront intelligence",
-      "default": true
-    }
-  ]
+  "settings": []
 }
 {% endschema %}

@@ -62,6 +62,38 @@ mutation discountAutomaticDelete($id: ID!) {
 }
 `;
 
+// Deactivate automatic discount
+const DEACTIVATE_AUTOMATIC_DISCOUNT_MUTATION = `
+mutation discountAutomaticDeactivate($id: ID!) {
+  discountAutomaticDeactivate(id: $id) {
+    automaticDiscountNode {
+      id
+    }
+    userErrors {
+      field
+      message
+      code
+    }
+  }
+}
+`;
+
+// Activate automatic discount
+const ACTIVATE_AUTOMATIC_DISCOUNT_MUTATION = `
+mutation discountAutomaticActivate($id: ID!) {
+  discountAutomaticActivate(id: $id) {
+    automaticDiscountNode {
+      id
+    }
+    userErrors {
+      field
+      message
+      code
+    }
+  }
+}
+`;
+
 // Find Flash Clearance collection
 const FIND_COLLECTION_QUERY = `
 query findCollection($query: String!) {
@@ -530,6 +562,50 @@ async function deleteClearanceDiscount(
       success: false,
       message: error.message,
     };
+  }
+}
+
+/**
+ * Deactivates an automatic discount in Shopify.
+ */
+async function deactivateClearanceDiscount(shop, accessToken, discountId) {
+  if (!discountId) return { success: true };
+  try {
+    const formattedId = ensureGid(discountId, "DiscountAutomaticNode");
+    const data = await shopifyGraphQL(shop, accessToken, DEACTIVATE_AUTOMATIC_DISCOUNT_MUTATION, {
+      id: formattedId,
+    });
+    const userErrors = data?.discountAutomaticDeactivate?.userErrors || [];
+    if (userErrors.length > 0) {
+      console.warn(`[ClearanceService] Deactivate warning for ${discountId}:`, userErrors.map(e => e.message).join(", "));
+      return { success: false, userErrors };
+    }
+    return { success: true };
+  } catch (error) {
+    console.warn(`[ClearanceService] Failed to deactivate discount ${discountId}:`, error.message);
+    return { success: false, message: error.message };
+  }
+}
+
+/**
+ * Activates an automatic discount in Shopify.
+ */
+async function activateClearanceDiscount(shop, accessToken, discountId) {
+  if (!discountId) return { success: true };
+  try {
+    const formattedId = ensureGid(discountId, "DiscountAutomaticNode");
+    const data = await shopifyGraphQL(shop, accessToken, ACTIVATE_AUTOMATIC_DISCOUNT_MUTATION, {
+      id: formattedId,
+    });
+    const userErrors = data?.discountAutomaticActivate?.userErrors || [];
+    if (userErrors.length > 0) {
+      console.warn(`[ClearanceService] Activate warning for ${discountId}:`, userErrors.map(e => e.message).join(", "));
+      return { success: false, userErrors };
+    }
+    return { success: true };
+  } catch (error) {
+    console.warn(`[ClearanceService] Failed to activate discount ${discountId}:`, error.message);
+    return { success: false, message: error.message };
   }
 }
 
@@ -1273,6 +1349,8 @@ module.exports = {
 
   deleteClearanceDiscount,
   deleteClearanceSale,
+  deactivateClearanceDiscount,
+  activateClearanceDiscount,
 
   addToClearanceCollection,
 
