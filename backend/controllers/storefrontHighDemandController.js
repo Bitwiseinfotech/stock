@@ -194,11 +194,11 @@ async function getHighDemandStorefrontWidget(req, res) {
     const daysUntilStockout =
       highDemandDoc?.daysUntilStockout !== null && highDemandDoc?.daysUntilStockout !== undefined
         ? Number(highDemandDoc.daysUntilStockout)
-        : currentStock <= 0                                
-        ? 0
-        : salesVelocity > 0      
-        ? Number((currentStock / salesVelocity).toFixed(2))
-        : null;       
+        : currentStock <= 0
+          ? 0
+          : salesVelocity > 0
+            ? Number((currentStock / salesVelocity).toFixed(2))
+            : null;
 
     let riskLevel = highDemandDoc?.riskLevel;
     if (!riskLevel) {
@@ -207,7 +207,7 @@ async function getHighDemandStorefrontWidget(req, res) {
 
     // Process back in stock if applicable
     if (currentStock > 0) {
-      processBackInStockNotifications(shop, cleanVariantId, currentStock).catch(() => {});
+      processBackInStockNotifications(shop, cleanVariantId, currentStock).catch(() => { });
     }
 
     // 4. Fetch Global Low Stock Badge Customization Config for Shop
@@ -221,7 +221,7 @@ async function getHighDemandStorefrontWidget(req, res) {
     // Config flags
     const threshold = Number(globalLowStockConfig?.threshold || configDoc?.lowStockBadge?.threshold || 5);
     const showDaysRemaining = globalLowStockConfig?.showDaysRemaining !== false && configDoc?.lowStockBadge?.showDaysRemaining !== false;
-    
+
     const SmartBadgeApplication = require("../models/SmartBadgeApplication");
     const { getBadgeAssignment } = require("../services/badgeAssignment.service");
 
@@ -252,9 +252,9 @@ async function getHighDemandStorefrontWidget(req, res) {
     const isLowStockBadgeConfigured =
       isGlobalLowStockEnabled &&
       (Boolean(isSmartAssignmentLowStock) ||
-      Boolean(smartBadgeLowStock) ||
-      isExplicitlyEnabledOnProduct ||
-      currentStock <= threshold);
+        Boolean(smartBadgeLowStock) ||
+        isExplicitlyEnabledOnProduct ||
+        currentStock <= threshold);
 
     const PreOrderConfig = require("../models/PreOrderConfig");
     const globalPreOrderConfig = await PreOrderConfig.findOne({
@@ -474,7 +474,7 @@ async function subscribeStockoutNotification(req, res) {
           variantTitle: existing.variantTitle || variantTitle,
           productHandle: existing.productHandle || productHandle,
           variantId: cleanVariantId,
-        }).catch(() => {});
+        }).catch(() => { });
 
         return res.status(200).json({
           success: true,
@@ -509,7 +509,7 @@ async function subscribeStockoutNotification(req, res) {
       variantTitle,
       productHandle,
       variantId: cleanVariantId,
-    }).catch(() => {});
+    }).catch(() => { });
 
     return res.status(200).json({
       success: true,

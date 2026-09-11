@@ -68,22 +68,38 @@ export default function CreateDeadStockBundleModal({
     fetchCompanionProducts(activeShop, productId)
       .then((data) => {
         const list = Array.isArray(data) ? data : [];
-        setCompanionList(list);
+        const sortedList = [...list].sort((a, b) => {
+          if (a.createdAt && b.createdAt) {
+            return new Date(b.createdAt) - new Date(a.createdAt);
+          }
+          return 0;
+        });
+        setCompanionList(sortedList);
 
         // Pre-select companion if editing or default to first
         if (effectiveBundle && (effectiveBundle.companionProductId || effectiveBundle.companionVariantId)) {
-          const matched = list.find(
+          const matched = sortedList.find(
             (p) =>
               String(p.productId || p.id).includes(String(effectiveBundle.companionProductId).replace(/\D/g, "")) ||
               String(p.variantId).includes(String(effectiveBundle.companionVariantId).replace(/\D/g, ""))
           );
           if (matched) {
             setSelectedCompanionId(matched.productId || matched.id);
-          } else if (list.length > 0) {
-            setSelectedCompanionId(list[0].productId || list[0].id);
+          } else if (sortedList.length > 0) {
+            setSelectedCompanionId(sortedList[0].productId || sortedList[0].id);
           }
-        } else if (list.length > 0) {
-          setSelectedCompanionId(list[0].productId || list[0].id);
+        } else if (sortedList.length > 0) {
+          setSelectedCompanionId(sortedList[0].productId || sortedList[0].id);
+        }
+
+        // If BOGO offer is active and free product is not yet selected, pre-select the newly added product
+        if (!effectiveBundle && sortedList.length > 0) {
+          setSelectedFreeProductId((prev) => {
+            if (offer === "BOGO" && !prev) {
+              return String(sortedList[0].productId || sortedList[0].id);
+            }
+            return prev;
+          });
         }
       })
       .catch((err) => {
@@ -92,7 +108,7 @@ export default function CreateDeadStockBundleModal({
       .finally(() => {
         setIsLoadingCompanions(false);
       });
-  }, [open, productId, activeShop, effectiveBundle]);
+  }, [open, productId, activeShop, effectiveBundle, offer]);
 
   // Initialize bundle fields
   useEffect(() => {
@@ -237,7 +253,14 @@ export default function CreateDeadStockBundleModal({
     { label: "Buy One Get One Free", value: "BOGO" },
   ];
 
-  const freeProductOptions = companionList.map((p) => ({
+  const freeProductList = [...companionList].sort((a, b) => {
+    if (a.createdAt && b.createdAt) {
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    }
+    return 0;
+  });
+
+  const freeProductOptions = freeProductList.map((p) => ({
     label: `${p.title} (${p.stock ?? p.currentStock ?? 0} in stock)`,
     value: String(p.productId || p.id),
   }));
@@ -356,6 +379,8 @@ export default function CreateDeadStockBundleModal({
               setOffer(val);
               if (val !== "BOGO") {
                 setSelectedFreeProductId("");
+              } else if (!selectedFreeProductId && freeProductOptions.length > 0) {
+                setSelectedFreeProductId(freeProductOptions[0].value);
               }
             }}
           />

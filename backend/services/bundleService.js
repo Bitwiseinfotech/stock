@@ -9,11 +9,13 @@ const { getProduct, createBundleProduct } = require("./shopifyBundleService");
 
 const PRODUCTS_QUERY = `
 query getCompanionProducts($first: Int!) {
-  products(first: $first, sortKey: UPDATED_AT, reverse: true) {
+  products(first: $first, sortKey: CREATED_AT, reverse: true) {
     nodes {
       id
       title
       status
+      createdAt
+      updatedAt
       totalInventory
       featuredImage {
         url
@@ -1012,6 +1014,52 @@ async function getCompanionProducts(shop, accessToken, deadStockProductId) {
         excludeIds.add(`gid://shopify/ProductVariant/${cV}`);
       }
     }
+
+    // Also exclude existing bundles created by the app
+    try {
+      const existingBundles = await Bundle.find({
+        $or: [{ shop: cleanShopDomain }, { shop }],
+      }).lean().catch(() => []);
+
+      for (const b of existingBundles) {
+        if (b.shopifyProductId) {
+          const c = cleanIdNumber(b.shopifyProductId);
+          excludeIds.add(b.shopifyProductId);
+          excludeIds.add(c);
+          excludeIds.add(`gid://shopify/Product/${c}`);
+        }
+        if (b.shopifyBundleId) {
+          const c = cleanIdNumber(b.shopifyBundleId);
+          excludeIds.add(b.shopifyBundleId);
+          excludeIds.add(c);
+          excludeIds.add(`gid://shopify/Product/${c}`);
+        }
+      }
+
+      if (mongoose.models.DeadStockBundle) {
+        const deadStockBundles = await mongoose.models.DeadStockBundle.find({
+          $or: [{ shop: cleanShopDomain }, { shop }],
+        }).lean().catch(() => []);
+
+        for (const dsb of deadStockBundles) {
+          if (dsb.shopifyProductId) {
+            const c = cleanIdNumber(dsb.shopifyProductId);
+            excludeIds.add(dsb.shopifyProductId);
+            excludeIds.add(c);
+            excludeIds.add(`gid://shopify/Product/${c}`);
+          }
+          if (dsb.shopifyBundleProductId) {
+            const c = cleanIdNumber(dsb.shopifyBundleProductId);
+            excludeIds.add(dsb.shopifyBundleProductId);
+            excludeIds.add(c);
+            excludeIds.add(`gid://shopify/Product/${c}`);
+          }
+        }
+      }
+    } catch (bundleExErr) {
+      console.warn("[BundleService] Error resolving bundle IDs to exclude:", bundleExErr.message);
+    }
+
     const excludeArray = Array.from(excludeIds).filter(Boolean);
 
     let validToken = accessToken;
@@ -1025,14 +1073,15 @@ async function getCompanionProducts(shop, accessToken, deadStockProductId) {
     // 1. Primary: Query Shopify GraphQL if token is available
     if (validToken && cleanShopDomain) {
       try {
-        const data = await shopifyGraphQL(cleanShopDomain, validToken, PRODUCTS_QUERY, { first: 100 });
+        const data = await shopifyGraphQL(cleanShopDomain, validToken, PRODUCTS_QUERY, { first: 250 });
         const nodes = data?.products?.nodes || [];
 
         const filtered = nodes.filter((p) => {
           const pClean = cleanIdNumber(p.id);
           const notCurrent = !excludeIds.has(p.id) && !excludeIds.has(pClean);
           const notArchived = p.status !== "ARCHIVED";
-          return notCurrent && notArchived;
+          const notAppBundle = !p.title?.includes("+ Companion Bundle") && !p.title?.endsWith(" Bundle");
+          return notCurrent && notArchived && notAppBundle;
         });
 
         if (filtered.length > 0) {
@@ -1050,6 +1099,7 @@ async function getCompanionProducts(shop, accessToken, deadStockProductId) {
               image: p.featuredImage?.url || "",
               price: Number(firstVariant?.price || 0),
               stock: liveStock,
+              createdAt: p.createdAt || null,
             };
           });
         }
@@ -1065,7 +1115,8 @@ async function getCompanionProducts(shop, accessToken, deadStockProductId) {
           $or: [{ shop: cleanShopDomain }, { shop }],
           productId: { $nin: excludeArray },
         })
-          .limit(15)
+          .sort({ createdAt: -1 })
+          .limit(250)
           .lean()
       : [];
 
@@ -1081,6 +1132,7 @@ async function getCompanionProducts(shop, accessToken, deadStockProductId) {
           image: item.image || "",
           price: Number(firstVar?.price || 0),
           stock: Number(item.totalInventory || firstVar?.inventoryQuantity || 0),
+          createdAt: item.createdAt || null,
         };
       });
     }
@@ -1092,8 +1144,8 @@ async function getCompanionProducts(shop, accessToken, deadStockProductId) {
       productId: { $nin: excludeArray },
       variantId: { $nin: excludeArray },
     })
-      .sort({ _id: -1 })
-      .limit(100)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(250)
       .lean();
 
     if (dbItems && dbItems.length > 0) {
@@ -1123,6 +1175,7 @@ async function getCompanionProducts(shop, accessToken, deadStockProductId) {
             image: item.image || "",
             price: Number(item.currentPrice || item.costPrice || item.price || 0),
             stock: Number(item.stock || item.inventoryQuantity || 0),
+            createdAt: item.createdAt || null,
           });
         }
       }
