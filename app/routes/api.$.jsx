@@ -9,7 +9,7 @@ async function proxyToBackend(request, params) {
     // If session is missing, continue gracefully
   }
 
-  const backendBaseUrl = process.env.BACKEND_URL || "http://localhost:5000";
+  const primaryBackendUrl = process.env.BACKEND_URL || "http://127.0.0.1:5000";
   const requestUrl = new URL(request.url);
 
   const shop = requestUrl.searchParams.get("shop") || session?.shop || "";
@@ -31,7 +31,7 @@ async function proxyToBackend(request, params) {
     }
   }
 
-  const backendUrl = new URL(requestUrl.pathname, backendBaseUrl);
+  const backendUrl = new URL(requestUrl.pathname, primaryBackendUrl);
   backendUrl.search = requestUrl.search;
 
   const headers = {
@@ -50,11 +50,27 @@ async function proxyToBackend(request, params) {
   }
 
   try {
-    const backendResponse = await fetch(backendUrl.toString(), {
-      method: request.method,
-      headers,
-      body,
-    });
+    let backendResponse;
+    try {
+      backendResponse = await fetch(backendUrl.toString(), {
+        method: request.method,
+        headers,
+        body,
+      });
+    } catch (primaryErr) {
+      // Fallback: if 127.0.0.1 failed and no explicit BACKEND_URL was set, try localhost
+      if (!process.env.BACKEND_URL) {
+        const fallbackUrl = new URL(requestUrl.pathname, "http://localhost:5000");
+        fallbackUrl.search = requestUrl.search;
+        backendResponse = await fetch(fallbackUrl.toString(), {
+          method: request.method,
+          headers,
+          body,
+        });
+      } else {
+        throw primaryErr;
+      }
+    }
 
     const responseText = await backendResponse.text();
 
