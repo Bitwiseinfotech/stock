@@ -80,10 +80,9 @@
           var v = {{ product.selected_or_first_available_variant.id | json }};
           if (s && p && v) {
             var url = "/apps/smart-stock/product-widget?shop=" + encodeURIComponent(s) + "&productId=" + encodeURIComponent(p) + "&variantId=" + encodeURIComponent(v);
-            var localUrl = "http://localhost:5000/api/storefront/product-widget?shop=" + encodeURIComponent(s) + "&productId=" + encodeURIComponent(p) + "&variantId=" + encodeURIComponent(v);
             window.__SmartStockPreloadPromise = fetch(url, { credentials: "same-origin" })
-              .then(function(r) { return r.ok ? r.json() : fetch(localUrl).then(function(lr) { return lr.ok ? lr.json() : null; }); })
-              .catch(function() { return fetch(localUrl).then(function(lr) { return lr.ok ? lr.json() : null; }).catch(function() { return null; }); });
+              .then(function(r) { return r.ok ? r.json() : null; })
+              .catch(function() { return null; });
           }
         } catch (_) {}
       })();

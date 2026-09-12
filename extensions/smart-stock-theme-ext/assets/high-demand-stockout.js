@@ -641,7 +641,7 @@
     const subtextColor = data.lowStockBadge?.subtextColor || "#B91C1C";
     const borderRadius = (data.lowStockBadge?.borderRadius ?? 8) + "px";
     const fontSize = (data.lowStockBadge?.fontSize ?? 15) + "px";
-    const paddingVal = (data.lowStockBadge?.padding ?? 12) + "px 16px";
+    const paddingVal = (data.lowStockBadge?.padding ?? 10) + "px 14px";
     const pulseStyle = data.lowStockBadge?.pulseAnimation ? "animation: smartStockPulse 2s infinite ease-in-out;" : "";
     const showIcon = data.lowStockBadge?.showIcon !== false;
     const configuredIcon = (data.lowStockBadge?.icon && data.lowStockBadge?.icon !== "none") ? data.lowStockBadge.icon : "";
@@ -651,12 +651,12 @@
       .trim();
 
     let displayMessage = cleanMsg;
-    if (showIcon && configuredIcon) {
-      displayMessage = `${configuredIcon} ${cleanMsg}`;
+    if (showIcon) {
+      displayMessage = `${configuredIcon || "🔥"} ${cleanMsg}`;
     }
 
     shieldEl.innerHTML = `
-      <div class="smart-stock-badge-container" style="background-color: ${escapeHtml(bgColor)}; border-color: ${escapeHtml(borderColor)}; border-radius: ${escapeHtml(borderRadius)}; padding: ${escapeHtml(paddingVal)}; color: ${escapeHtml(textColor)}; ${pulseStyle}">
+      <div class="smart-stock-badge-container" style="background-color: ${escapeHtml(bgColor)}; border-color: ${escapeHtml(borderColor)}; border-radius: ${escapeHtml(borderRadius)}; padding: ${escapeHtml(paddingVal)}; color: ${escapeHtml(textColor)}; max-width: 44rem; box-sizing: border-box; width: 100%; ${pulseStyle}">
         <div class="smart-stock-badge-main" style="color: ${escapeHtml(textColor)}; font-size: ${escapeHtml(fontSize)};">
           <span>${escapeHtml(displayMessage)}</span>
         </div>
