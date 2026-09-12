@@ -1,7 +1,16 @@
+const mongoose = require("mongoose");
+const connectDB = require("../config/mongodb");
 const Store = require("../models/Store");
+
+async function ensureConnected() {
+  if (mongoose.connection.readyState !== 1) {
+    await connectDB();
+  }
+}
 
 async function authenticateShop(req, res, next) {
   try {
+    await ensureConnected();
     let shop = req.query.shop || req.headers["x-shopify-shop-domain"] || req.body?.shop;
     const accessToken = req.headers["x-shopify-access-token"] || req.body?.accessToken;
 

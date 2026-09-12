@@ -1,5 +1,14 @@
+const mongoose = require("mongoose");
+const connectDB = require("../config/mongodb");
+const Store = require("../models/Store");
 const Subscription = require("../models/Subscription");
 const PLAN_LIMITS = require("../config/planLimits");
+
+async function ensureConnected() {
+    if (mongoose.connection.readyState !== 1) {
+        await connectDB();
+    }
+}
 
 // =====================================================
 // HELPER: CALCULATE REMAINING USAGE
@@ -25,6 +34,7 @@ const {
 
 const getSubscription = async (req, res) => {
     try {
+        await ensureConnected();
         const normalizedShop = resolveShop(req);
 
         if (!normalizedShop) {
@@ -201,7 +211,6 @@ const getSubscription = async (req, res) => {
     }
 };
 
-const Store = require("../models/Store");
 const SHOPIFY_BILLING_PLANS = require("../config/shopifyBillingPlans");
 const shopifyGraphQL = require("../services/shopifyGraphql");
 const {
@@ -216,6 +225,7 @@ const {
  */
 async function resolveAppHandle(shop, accessToken) {
     try {
+        await ensureConnected();
         const store = await Store.findOne({
             $or: [
                 { shop },
@@ -255,6 +265,7 @@ async function resolveAppHandle(shop, accessToken) {
 
 const upgradeSubscription = async (req, res) => {
     try {
+        await ensureConnected();
         const normalizedShop = resolveShop(req);
 
         if (!normalizedShop) {
@@ -299,6 +310,14 @@ const upgradeSubscription = async (req, res) => {
                 success: false,
                 message: "Shopify access token not found for this store. Please reinstall the app.",
             });
+        }
+
+        if (accessToken && (!store || !store.accessToken)) {
+            Store.findOneAndUpdate(
+                { shop: normalizedShop },
+                { shop: normalizedShop, accessToken, active: true },
+                { upsert: true }
+            ).catch(() => {});
         }
 
         const subscription = await getOrCreateSubscription(normalizedShop);
@@ -401,6 +420,7 @@ const upgradeSubscription = async (req, res) => {
 
 const confirmSubscription = async (req, res) => {
     try {
+        await ensureConnected();
         const normalizedShop = resolveShop(req);
         const chargeId =
             req.query.charge_id ||
@@ -520,6 +540,7 @@ const confirmSubscription = async (req, res) => {
 
 const verifySubscription = async (req, res) => {
     try {
+        await ensureConnected();
         const normalizedShop = resolveShop(req);
 
         if (!normalizedShop) {
@@ -596,6 +617,7 @@ const verifySubscription = async (req, res) => {
 
 const switchFree = async (req, res) => {
     try {
+        await ensureConnected();
         const normalizedShop = resolveShop(req);
 
         if (!normalizedShop) {

@@ -44,6 +44,8 @@ const getInitialTrends = () => {
 };
 
 const DEFAULT_DASHBOARD_DATA = {
+  currencyCode: "INR",
+  currencySymbol: "₹",
   totalCashRecovered: 0,
   growthPercentage: 0,
   deadStockCashTiedUp: 0,
@@ -182,6 +184,8 @@ export default function Dashboard({ shopDomain = "" }) {
         setData((prev) => {
           const updated = {
             ...prev,
+            currencyCode: res.currencyCode || prev.currencyCode || "INR",
+            currencySymbol: res.currencySymbol || prev.currencySymbol || (res.currencyCode === "USD" ? "$" : "₹"),
             totalCashRecovered: res.totalCashRecovered ?? prev.totalCashRecovered,
             growthPercentage: res.growthPercentage ?? prev.growthPercentage,
             deadStockCashTiedUp: res.deadStockCashTiedUp ?? prev.deadStockCashTiedUp,
@@ -228,12 +232,19 @@ export default function Dashboard({ shopDomain = "" }) {
     loadData(false);
   }, [effectiveShop, loadData]);
 
+  const currencyCode = data.currencyCode || "INR";
+  const currencySymbol = data.currencySymbol || (currencyCode === "USD" ? "$" : "₹");
+
   const formatCurrency = (amount) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      maximumFractionDigits: 0,
-    }).format(amount || 0);
+    try {
+      return new Intl.NumberFormat(currencyCode === "INR" ? "en-IN" : "en-US", {
+        style: "currency",
+        currency: currencyCode,
+        maximumFractionDigits: 0,
+      }).format(amount || 0);
+    } catch {
+      return `${currencySymbol}${Number(amount || 0).toLocaleString()}`;
+    }
   };
 
   // Active trend data depending on timeframe selector
@@ -264,12 +275,12 @@ export default function Dashboard({ shopDomain = "" }) {
   const periodLabel = timeframe === "daily" ? "day" : timeframe === "weekly" ? "wk" : "mo";
 
   const formatScale = (amount) => {
-    if (amount >= 1000000) return `$${(amount / 1000000).toFixed(1)}M`;
+    if (amount >= 1000000) return `${currencySymbol}${(amount / 1000000).toFixed(1)}M`;
     if (amount >= 1000) {
       const k = amount / 1000;
-      return k % 1 === 0 ? `$${k}k` : `$${k.toFixed(1)}k`;
+      return k % 1 === 0 ? `${currencySymbol}${k}k` : `${currencySymbol}${k.toFixed(1)}k`;
     }
-    return `$${Math.round(amount)}`;
+    return `${currencySymbol}${Math.round(amount)}`;
   };
 
   return (

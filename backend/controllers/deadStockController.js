@@ -75,6 +75,11 @@ function parseInteger(value, fallback) {
 async function persistStoreToken(shopId, headerToken) {
   if (shopId && headerToken && !headerToken.startsWith("shpua_test")) {
     try {
+      const existing = await Store.findOne({ shop: shopId });
+      if (existing?.accessToken?.startsWith("shpat_") && !headerToken.startsWith("shpat_")) {
+        // Do not overwrite permanent offline token with temporary online token
+        return;
+      }
       await Store.findOneAndUpdate(
         { shop: shopId },
         { shop: shopId, accessToken: headerToken, active: true },
@@ -118,6 +123,47 @@ async function getStoreProducts(req, res) {
 
     const accessToken = await getAccessToken(req, shop);
     if (!accessToken) {
+      // If token not found in headers or DB, attempt to load products from MongoDB DeadStock collection directly
+      const deadStockDocs = await DeadStock.find({ shop }).sort({ updatedAt: -1 }).limit(50).lean();
+      if (deadStockDocs && deadStockDocs.length > 0) {
+        const fallbackProducts = deadStockDocs.map((doc) => ({
+          id: doc.variantId || doc.productId || String(doc._id),
+          variantId: doc.variantId || "",
+          productId: doc.productId || "",
+          title: doc.productTitle ? (doc.variantTitle ? `${doc.productTitle} - ${doc.variantTitle}` : doc.productTitle) : (doc.title || "Product"),
+          productTitle: doc.productTitle || doc.title || "Product",
+          handle: doc.handle || "",
+          status: "active",
+          image: doc.image || null,
+          sku: doc.sku || "",
+          stock: doc.stock || 0,
+          currentPrice: doc.currentPrice || 0,
+          unitCost: doc.costPrice || doc.unitCost || 0,
+          cashTiedUp: doc.cashTiedUp || 0,
+          daysUnsold: doc.daysUnsold || 0,
+          lastSoldAt: doc.lastSoldAt || null,
+          salesVelocity: doc.salesVelocity || 0,
+          salesLast7Days: doc.salesLast7Days || 0,
+          salesLast30Days: doc.salesLast30Days || 0,
+          salesLast60Days: doc.salesLast60Days || 0,
+        }));
+
+        return res.json({
+          success: true,
+          data: fallbackProducts,
+          pagination: {
+            limit: 50,
+            hasNextPage: false,
+            hasPreviousPage: false,
+            nextCursor: null,
+            previousCursor: null,
+            totalItems: deadStockDocs.length,
+            totalPages: 1,
+          },
+          billing: { plan: "free", productLimit: 50 },
+        });
+      }
+
       return res.status(401).json({
         success: false,
         message: "Shopify access token not found. Please reinstall the app.",
@@ -141,11 +187,59 @@ async function getStoreProducts(req, res) {
 
     console.log(`[StoreProducts] shop=${shop} plan=${subscription?.plan} limit=${finalLimit} first=${first} after=${after || "null"} search=${rawSearch || "none"} query=${shopifyQuery}`);
 
-    const data = await shopifyGraphQL(shop, accessToken, GET_STORE_PRODUCTS_QUERY, {
-      first,
-      after,
-      query: shopifyQuery,
-    });
+    let data = null;
+    try {
+      data = await shopifyGraphQL(shop, accessToken, GET_STORE_PRODUCTS_QUERY, {
+        first,
+        after,
+        query: shopifyQuery,
+      });
+    } catch (graphErr) {
+      console.warn(`[StoreProducts] shopifyGraphQL error: ${graphErr.message}. Falling back to MongoDB records.`);
+      const deadStockDocs = await DeadStock.find({ shop }).sort({ updatedAt: -1 }).limit(finalLimit).lean();
+      if (deadStockDocs && deadStockDocs.length > 0) {
+        const fallbackProducts = deadStockDocs.map((doc) => ({
+          id: doc.variantId || doc.productId || String(doc._id),
+          variantId: doc.variantId || "",
+          productId: doc.productId || "",
+          title: doc.productTitle ? (doc.variantTitle ? `${doc.productTitle} - ${doc.variantTitle}` : doc.productTitle) : (doc.title || "Product"),
+          productTitle: doc.productTitle || doc.title || "Product",
+          handle: doc.handle || "",
+          status: "active",
+          image: doc.image || null,
+          sku: doc.sku || "",
+          stock: doc.stock || 0,
+          currentPrice: doc.currentPrice || 0,
+          unitCost: doc.costPrice || doc.unitCost || 0,
+          cashTiedUp: doc.cashTiedUp || 0,
+          daysUnsold: doc.daysUnsold || 0,
+          lastSoldAt: doc.lastSoldAt || null,
+          salesVelocity: doc.salesVelocity || 0,
+          salesLast7Days: doc.salesLast7Days || 0,
+          salesLast30Days: doc.salesLast30Days || 0,
+          salesLast60Days: doc.salesLast60Days || 0,
+        }));
+
+        return res.json({
+          success: true,
+          data: fallbackProducts,
+          pagination: {
+            limit: finalLimit,
+            hasNextPage: false,
+            hasPreviousPage: false,
+            nextCursor: null,
+            previousCursor: null,
+            totalItems: deadStockDocs.length,
+            totalPages: 1,
+          },
+          billing: {
+            plan: subscription?.plan || "free",
+            productLimit: planProductLimit === Infinity ? "unlimited" : planProductLimit,
+          },
+        });
+      }
+      throw graphErr;
+    }
 
     const connection = data?.products;
     if (!connection) {

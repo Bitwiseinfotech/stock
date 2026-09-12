@@ -145,8 +145,8 @@ export default function DeadStock({
   // ─────────────────────────────────────────────────────────────────────────
   const loadShopifyPage = useCallback(
     async (targetPage, search) => {
-      if (!activeShop || !activeToken) {
-        setError("Shop domain or access token is missing.");
+      if (!activeShop) {
+        setError("Shop domain is missing.");
         return;
       }
 

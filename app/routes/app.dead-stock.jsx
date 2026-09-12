@@ -1,21 +1,61 @@
 import { useLoaderData, useLocation, Outlet } from "react-router";
-import { authenticate } from "../shopify.server";
+import { authenticate, sessionStorage } from "../shopify.server";
 import DeadStock from "../../src/pages/DeadStock/DeadStock";
+
+const GET_STORE_PRODUCTS_QUERY = `
+  query GetStoreProducts($first: Int!, $after: String, $query: String) {
+    products(first: $first, after: $after, query: $query, sortKey: UPDATED_AT, reverse: true) {
+      nodes {
+        id
+        title
+        handle
+        status
+        createdAt
+        updatedAt
+        totalInventory 
+        featuredImage { url altText }
+        variants(first: 250) {
+          nodes {
+            id
+            title
+            sku
+            price
+            createdAt
+            updatedAt
+            inventoryQuantity
+            inventoryItem {
+              unitCost { amount currencyCode }
+            }
+          }
+          pageInfo { hasNextPage }
+        }
+      }
+      pageInfo {
+        hasNextPage
+        hasPreviousPage
+        startCursor
+        endCursor
+      }
+    }
+  }
+`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SSR Loader — runs on the server, provides initial page data.
-//
-// Fetches:
-//   1. Global dead-stock summary (MongoDB aggregate)
-//   2. First page of Shopify products (50 items, cursor = null)
-//
-// This means the page renders with real Shopify data immediately on first load.
-// The client-side React component detects initialProducts and skips re-fetching.
 // ─────────────────────────────────────────────────────────────────────────────
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const shop = session?.shop || "";
-  const token = session?.accessToken || "";
+
+  let token = session?.accessToken || "";
+  try {
+    const offlineSession = await sessionStorage.loadSession(`offline_${shop}`);
+    if (offlineSession?.accessToken) {
+      token = offlineSession.accessToken;
+    }
+  } catch (err) {
+    console.warn("[DeadStock SSR] Error loading offline session:", err.message);
+  }
 
   const backendBaseUrl = process.env.BACKEND_URL || "http://localhost:5000";
 
@@ -42,27 +82,114 @@ export const loader = async ({ request }) => {
       fetch(
         `${backendBaseUrl}/api/dead-stock/summary?shop=${encodeURIComponent(shop)}`,
         { headers: commonHeaders }
-      ),
+      ).catch(() => null),
       fetch(
         `${backendBaseUrl}/api/dead-stock/store-products?shop=${encodeURIComponent(shop)}&limit=50`,
         { headers: commonHeaders }
-      ),
+      ).catch(() => null),
     ]);
 
-    if (summaryRes.ok) {
+    if (summaryRes && summaryRes.ok) {
       const summaryJson = await summaryRes.json().catch(() => ({}));
       if (summaryJson.success && summaryJson.data) {
         initialSummary = summaryJson.data;
       }
     }
 
-    if (productsRes.ok) {
+    if (productsRes && productsRes.ok) {
       const productsJson = await productsRes.json().catch(() => ({}));
       if (productsJson.success) {
         initialProducts = productsJson.data || [];
         if (productsJson.pagination) {
           initialPagination = productsJson.pagination;
         }
+      }
+    } else if (admin) {
+      // Fallback to admin.graphql directly if backend products request fails (e.g. 401)
+      try {
+        const response = await admin.graphql(GET_STORE_PRODUCTS_QUERY, {
+          variables: { first: 50, after: null, query: "status:active" },
+        });
+        const result = await response.json();
+        const connection = result?.data?.products;
+        if (connection?.nodes) {
+          const fallbackProducts = [];
+          for (const product of connection.nodes) {
+            const variants = product.variants?.nodes || [];
+            if (variants.length === 0) {
+              fallbackProducts.push({
+                id: product.id,
+                variantId: "",
+                productId: product.id,
+                productTitle: product.title,
+                handle: product.handle,
+                status: product.status,
+                image: product.featuredImage?.url || null,
+                sku: "",
+                stock: 0,
+                currentPrice: 0,
+                unitCost: 0,
+                cashTiedUp: 0,
+                daysUnsold: 0,
+                lastSoldAt: null,
+                salesVelocity: 0,
+                salesLast7Days: 0,
+                salesLast30Days: 0,
+                salesLast60Days: 0,
+              });
+              continue;
+            }
+            for (const variant of variants) {
+              const currentPrice = Number(variant.price) || 0;
+              const rawCost = variant.inventoryItem?.unitCost?.amount;
+              const unitCost = rawCost != null && Number(rawCost) > 0 ? Number(rawCost) : currentPrice;
+              let stock = variant.inventoryQuantity != null ? Number(variant.inventoryQuantity) : 0;
+              if (isNaN(stock) || (stock === 0 && Number(product.totalInventory) > 0 && variants.length === 1)) {
+                stock = Number(product.totalInventory) || 0;
+              }
+              const cashTiedUp = Number((stock * unitCost).toFixed(2));
+              let daysUnsold = 0;
+              const creationDate = variant.createdAt || product.createdAt;
+              if (creationDate) {
+                const diffMs = Date.now() - new Date(creationDate).getTime();
+                daysUnsold = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+              }
+              fallbackProducts.push({
+                id: variant.id,
+                variantId: variant.id,
+                productId: product.id,
+                title: variant.title !== "Default Title" ? `${product.title} - ${variant.title}` : product.title,
+                productTitle: product.title,
+                handle: product.handle,
+                status: product.status,
+                image: product.featuredImage?.url || null,
+                sku: variant.sku || "",
+                stock,
+                currentPrice,
+                unitCost,
+                cashTiedUp,
+                daysUnsold,
+                lastSoldAt: null,
+                salesVelocity: 0,
+                salesLast7Days: 0,
+                salesLast30Days: 0,
+                salesLast60Days: 0,
+              });
+            }
+          }
+          initialProducts = fallbackProducts;
+          initialPagination = {
+            limit: 50,
+            hasNextPage: connection.pageInfo?.hasNextPage || false,
+            hasPreviousPage: connection.pageInfo?.hasPreviousPage || false,
+            nextCursor: connection.pageInfo?.endCursor || null,
+            previousCursor: connection.pageInfo?.startCursor || null,
+            totalItems: null,
+            totalPages: null,
+          };
+        }
+      } catch (adminErr) {
+        console.warn("[DeadStock SSR] Fallback admin.graphql error:", adminErr.message);
       }
     }
   } catch (err) {

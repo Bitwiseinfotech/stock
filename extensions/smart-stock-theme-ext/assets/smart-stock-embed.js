@@ -2058,6 +2058,8 @@
         const candidateUrls = [
           `/apps/smart-stock/product-widget?${params.toString()}`,
           `/apps/smart-stock/bundles?${params.toString()}`,
+          `http://localhost:5000/api/storefront/product-widget?${params.toString()}`,
+          `http://127.0.0.1:5000/api/storefront/product-widget?${params.toString()}`,
         ];
 
         for (const url of candidateUrls) {

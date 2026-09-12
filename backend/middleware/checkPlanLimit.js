@@ -1,5 +1,13 @@
+const mongoose = require("mongoose");
+const connectDB = require("../config/mongodb");
 const Subscription = require("../models/Subscription");
 const PLAN_LIMITS = require("../config/planLimits");
+
+async function ensureConnected() {
+    if (mongoose.connection.readyState !== 1) {
+        await connectDB();
+    }
+}
 
 // =====================================================
 // RESOLVE & NORMALIZE SHOP
@@ -22,6 +30,7 @@ const resolveShop = (req) => {
 
 const getOrCreateSubscription = async (shop) => {
     if (!shop) return null;
+    await ensureConnected();
     const normalizedShop = String(shop).trim().toLowerCase();
 
     let subscription = await Subscription.findOne({ shop: normalizedShop });

@@ -1119,22 +1119,34 @@
       String(variantId)
     );
 
-    fetch(
-      "/apps/smart-stock/product-widget?" +
-      params.toString(),
-      {
-        credentials: "same-origin"
+    params.set(
+      "_t",
+      String(Date.now())
+    );
+
+    var candidateUrls = [
+      "/apps/smart-stock/product-widget?" + params.toString(),
+      "http://localhost:5000/api/storefront/product-widget?" + params.toString(),
+      "http://127.0.0.1:5000/api/storefront/product-widget?" + params.toString()
+    ];
+
+    function tryFetchUrls(index) {
+      if (index >= candidateUrls.length) {
+        return Promise.reject(new Error("Clearance sale widget request failed on all endpoints"));
       }
-    )
-      .then(function (response) {
-        if (!response.ok) {
-          throw new Error(
-            "Clearance sale request failed: " +
-            response.status
-          );
-        }
-        return response.json();
-      })
+      return fetch(candidateUrls[index], { credentials: "same-origin" })
+        .then(function (response) {
+          if (!response.ok) {
+            return tryFetchUrls(index + 1);
+          }
+          return response.json();
+        })
+        .catch(function () {
+          return tryFetchUrls(index + 1);
+        });
+    }
+
+    tryFetchUrls(0)
       .then(function (data) {
         var futureStartsAt = null;
         if (data && data.deadStockOffer) {
@@ -1320,12 +1332,13 @@
       }
 
 
-      if (attempts < 20) {
-
+      if (attempts < 10) {
         setTimeout(
           waitForButton,
-          300
+          250
         );
+      } else {
+        loadSale(initialVariantId);
       }
     }
 

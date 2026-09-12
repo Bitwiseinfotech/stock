@@ -40,6 +40,15 @@ function formatTimeAgo(dateInput) {
   return `${Math.floor(days / 30)}mo ago`;
 }
 
+const CURRENCY_SYMBOLS = {
+  USD: "$",
+  INR: "₹",
+  EUR: "€",
+  GBP: "£",
+  CAD: "CA$",
+  AUD: "A$",
+};
+
 // In-memory dashboard cache with Stale-While-Revalidate pattern
 const dashboardCache = new Map();
 const refreshPromises = new Map();
@@ -55,7 +64,14 @@ function invalidateDashboardCache(shop) {
   }
 }
 
-async function computeDashboardMetrics(shop) {
+async function computeDashboardMetrics(shop, headerToken = "") {
+  if (headerToken && shop) {
+    Store.findOneAndUpdate(
+      { $or: [{ shop }, { shop: cleanShop(shop) }] },
+      { shop: cleanShop(shop), accessToken: headerToken, active: true },
+      { upsert: true }
+    ).catch(() => {});
+  }
   const shopFilter = {
     $or: [
       { shop },
@@ -103,8 +119,11 @@ async function computeDashboardMetrics(shop) {
   let liveOrders = [];
   let catalogVariants = [];
   let liveCatalogInventory = 0;
+  let shopCurrency = "USD";
 
-  if (storeRecord?.accessToken) {
+  const effectiveToken = headerToken || storeRecord?.accessToken;
+
+  if (effectiveToken) {
     try {
       // Build date filter: past 6 calendar months from start of 6 months ago
       const sixMonthsAgo = new Date();
@@ -114,7 +133,7 @@ async function computeDashboardMetrics(shop) {
       const dateFilter = sixMonthsAgo.toISOString().split("T")[0]; // e.g. "2026-04-01"
 
       // Paginate orders: fetch up to 10 pages × 250 = 2500 orders within the 6-month window
-      const fetchOrdersPage = (cursor) => shopifyGraphQL(shop, storeRecord.accessToken, `
+      const fetchOrdersPage = (cursor) => shopifyGraphQL(shop, effectiveToken, `
         query getDashboardOrders($cursor: String) {
           orders(
             first: 250,
@@ -146,9 +165,12 @@ async function computeDashboardMetrics(shop) {
 
       // Fetch products and first orders page in parallel
       const [firstOrderRes, prodRes] = await Promise.all([
-        fetchOrdersPage(null),
-        shopifyGraphQL(shop, storeRecord.accessToken, `
+        fetchOrdersPage(null).catch(() => ({ orders: { nodes: [] } })),
+        shopifyGraphQL(shop, effectiveToken, `
           query getDashboardProducts {
+            shop {
+              currencyCode
+            }
             products(first: 250) {
               nodes {
                 id
@@ -164,8 +186,12 @@ async function computeDashboardMetrics(shop) {
               }
             }
           }
-        `),
+        `).catch(() => null),
       ]);
+
+      if (prodRes?.shop?.currencyCode) {
+        shopCurrency = prodRes.shop.currencyCode;
+      }
 
       // Collect all order pages
       let allOrderNodes = [...(firstOrderRes?.orders?.nodes || [])];
@@ -174,7 +200,7 @@ async function computeDashboardMetrics(shop) {
       const MAX_PAGES = 10;
 
       while (pageInfo?.hasNextPage && pageCount < MAX_PAGES) {
-        const nextRes = await fetchOrdersPage(pageInfo.endCursor);
+        const nextRes = await fetchOrdersPage(pageInfo.endCursor).catch(() => null);
         allOrderNodes = allOrderNodes.concat(nextRes?.orders?.nodes || []);
         pageInfo = nextRes?.orders?.pageInfo;
         pageCount++;
@@ -202,6 +228,12 @@ async function computeDashboardMetrics(shop) {
       console.warn("[DashboardController] Shopify GraphQL fetch warning:", err.message);
     }
   }
+
+  // Detect fallback currency if store is in India or deadStock has INR typical values
+  if (shopCurrency === "USD" && (shop.includes("dailybasket") || deadStockDocs.some((d) => (d.currentPrice || d.price || 0) > 200))) {
+    shopCurrency = "INR";
+  }
+  const currencySymbol = CURRENCY_SYMBOLS[shopCurrency] || "$";
 
   // 3. Real Active Automations Count
   const totalActiveAutomations =
@@ -326,6 +358,7 @@ async function computeDashboardMetrics(shop) {
   const highRiskItems = highDemandItems.filter((h) =>
     ["CRITICAL", "HIGH", "Critical", "High"].includes(h.riskLevel)
   );
+
   let revenueAtRisk = 0;
   for (const item of highRiskItems) {
     const vId = item.variantId;
@@ -343,7 +376,7 @@ async function computeDashboardMetrics(shop) {
       }
     }
   }
-  const highDemandRiskCount = highRiskItems.length > 0 ? highRiskItems.length : highDemandItems.length;
+  const highDemandRiskCount = highRiskItems.length > 0 ? highRiskItems.length : 0;
 
   // 6. Real Dead Stock Cash Tied Up & SKU Count (matching Dead Stock Engine & getDeadStockSummary)
   let deadStockCashTiedUp = 0;
@@ -362,101 +395,101 @@ async function computeDashboardMetrics(shop) {
     }
   }
 
-    // 7. REAL SHOPIFY STORE DATA: Daily, Weekly & Monthly Trends
-    const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  // 7. REAL SHOPIFY STORE DATA: Daily, Weekly & Monthly Trends
+  const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-    // 7a. Past 7 days ending today (Exact real orders)
-    const dailyTrend = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dayName = daysOfWeek[d.getDay()];
-      const dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  // 7a. Past 7 days ending today (Exact real orders)
+  const dailyTrend = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dayName = daysOfWeek[d.getDay()];
+    const dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-      const dayStart = new Date(d);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(d);
-      dayEnd.setHours(23, 59, 59, 999);
+    const dayStart = new Date(d);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(d);
+    dayEnd.setHours(23, 59, 59, 999);
 
-      const ordersOnDay = liveOrders.filter((o) => {
-        if (!o.createdAt) return false;
-        const od = new Date(o.createdAt);
-        return od >= dayStart && od <= dayEnd;
-      });
+    const ordersOnDay = liveOrders.filter((o) => {
+      if (!o.createdAt) return false;
+      const od = new Date(o.createdAt);
+      return od >= dayStart && od <= dayEnd;
+    });
 
-      const dayRevenue = ordersOnDay.reduce((sum, o) => sum + parseFloat(o.totalPriceSet?.shopMoney?.amount || 0), 0);
+    const dayRevenue = ordersOnDay.reduce((sum, o) => sum + parseFloat(o.totalPriceSet?.shopMoney?.amount || 0), 0);
 
-      dailyTrend.push({
-        label: i === 0 ? "Today" : dayName,
-        dayName,
-        fullDate: dateStr,
-        recovered: Math.round(dayRevenue),
-        count: ordersOnDay.length,
-      });
-    }
+    dailyTrend.push({
+      label: i === 0 ? "Today" : dayName,
+      dayName,
+      fullDate: dateStr,
+      recovered: Math.round(dayRevenue),
+      count: ordersOnDay.length,
+    });
+  }
 
-    // 7b. Past 6 calendar weeks ending this week (Exact real orders)
-    const weeklyTrend = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i * 7);
+  // 7b. Past 6 calendar weeks ending this week (Exact real orders)
+  const weeklyTrend = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i * 7);
 
-      const day = d.getDay();
-      const diffToMonday = d.getDate() - day + (day === 0 ? -6 : 1);
-      const weekStart = new Date(d.setDate(diffToMonday));
-      weekStart.setHours(0, 0, 0, 0);
+    const day = d.getDay();
+    const diffToMonday = d.getDate() - day + (day === 0 ? -6 : 1);
+    const weekStart = new Date(d.setDate(diffToMonday));
+    weekStart.setHours(0, 0, 0, 0);
 
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekStart.getDate() + 6);
-      weekEnd.setHours(23, 59, 59, 999);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    weekEnd.setHours(23, 59, 59, 999);
 
-      const ordersOnWeek = liveOrders.filter((o) => {
-        if (!o.createdAt) return false;
-        const od = new Date(o.createdAt);
-        return od >= weekStart && od <= weekEnd;
-      });
+    const ordersOnWeek = liveOrders.filter((o) => {
+      if (!o.createdAt) return false;
+      const od = new Date(o.createdAt);
+      return od >= weekStart && od <= weekEnd;
+    });
 
-      const weekRevenue = ordersOnWeek.reduce((sum, o) => sum + parseFloat(o.totalPriceSet?.shopMoney?.amount || 0), 0);
-      const startLabel = weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      const endLabel = weekEnd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const weekRevenue = ordersOnWeek.reduce((sum, o) => sum + parseFloat(o.totalPriceSet?.shopMoney?.amount || 0), 0);
+    const startLabel = weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const endLabel = weekEnd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-      weeklyTrend.push({
-        label: i === 0 ? "This Wk" : `Wk ${6 - i}`,
-        dateRange: `${startLabel} – ${endLabel}`,
-        recovered: Math.round(weekRevenue),
-        count: ordersOnWeek.length,
-      });
-    }
+    weeklyTrend.push({
+      label: i === 0 ? "This Wk" : `Wk ${6 - i}`,
+      dateRange: `${startLabel} – ${endLabel}`,
+      recovered: Math.round(weekRevenue),
+      count: ordersOnWeek.length,
+    });
+  }
 
-    // 7c. Past 6 calendar months ending current month (Exact real orders)
-    const monthlyTrend = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(1); // Set to 1st of month first to prevent day 31 rollover
-      d.setMonth(d.getMonth() - i);
-      const monthName = monthNames[d.getMonth()];
-      const monthYear = d.getFullYear();
+  // 7c. Past 6 calendar months ending current month (Exact real orders)
+  const monthlyTrend = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(1); // Set to 1st of month first to prevent day 31 rollover
+    d.setMonth(d.getMonth() - i);
+    const monthName = monthNames[d.getMonth()];
+    const monthYear = d.getFullYear();
 
-      const mStart = new Date(monthYear, d.getMonth(), 1, 0, 0, 0, 0);
-      const mEnd = new Date(monthYear, d.getMonth() + 1, 0, 23, 59, 59, 999);
+    const mStart = new Date(monthYear, d.getMonth(), 1, 0, 0, 0, 0);
+    const mEnd = new Date(monthYear, d.getMonth() + 1, 0, 23, 59, 59, 999);
 
-      const ordersOnMonth = liveOrders.filter((o) => {
-        if (!o.createdAt) return false;
-        const od = new Date(o.createdAt);
-        return od >= mStart && od <= mEnd;
-      });
+    const ordersOnMonth = liveOrders.filter((o) => {
+      if (!o.createdAt) return false;
+      const od = new Date(o.createdAt);
+      return od >= mStart && od <= mEnd;
+    });
 
-      const monthRevenue = ordersOnMonth.reduce((sum, o) => sum + parseFloat(o.totalPriceSet?.shopMoney?.amount || 0), 0);
+    const monthRevenue = ordersOnMonth.reduce((sum, o) => sum + parseFloat(o.totalPriceSet?.shopMoney?.amount || 0), 0);
 
-      monthlyTrend.push({
-        label: monthName,
-        month: monthName,
-        year: monthYear,
-        recovered: Math.round(monthRevenue),
-        count: ordersOnMonth.length,
-      });
-    }
+    monthlyTrend.push({
+      label: monthName,
+      month: monthName,
+      year: monthYear,
+      recovered: Math.round(monthRevenue),
+      count: ordersOnMonth.length,
+    });
+  }
 
     // Month-over-month growth calculation
     const currentMonthRev = monthlyTrend[5]?.recovered || 0;
@@ -650,6 +683,8 @@ async function computeDashboardMetrics(shop) {
           link: "/app/pre-orders",
         },
       ],
+      currencyCode: shopCurrency,
+      currencySymbol,
       smartRecipes: [
         {
           id: "recipe-clear-summer",
@@ -687,6 +722,7 @@ async function getDashboardMetrics(req, res) {
       }
     }
     const shop = cleanShop(rawShop);
+    const headerToken = req.headers["x-shopify-access-token"] || "";
     const forceRefresh = req.query.refresh === "true" || req.query.refresh === "1";
 
     const cachedEntry = dashboardCache.get(shop);
@@ -706,7 +742,7 @@ async function getDashboardMetrics(req, res) {
       // 2. Stale-While-Revalidate: return cached data immediately and refresh silently in background
       if (age < CACHE_STALE_MS) {
         if (!refreshPromises.has(shop)) {
-          const promise = computeDashboardMetrics(shop)
+          const promise = computeDashboardMetrics(shop, headerToken)
             .then((freshData) => {
               dashboardCache.set(shop, { data: freshData, timestamp: Date.now() });
             })
@@ -731,7 +767,7 @@ async function getDashboardMetrics(req, res) {
     // 3. Fresh synchronous calculation with deduplication
     let computationPromise = refreshPromises.get(shop);
     if (!computationPromise || forceRefresh) {
-      computationPromise = computeDashboardMetrics(shop);
+      computationPromise = computeDashboardMetrics(shop, headerToken);
       refreshPromises.set(shop, computationPromise);
     }
 

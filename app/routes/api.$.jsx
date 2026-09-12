@@ -17,13 +17,27 @@ async function proxyToBackend(request, params) {
     requestUrl.searchParams.set("shop", shop);
   }
 
+  let token = session?.accessToken || "";
+  if ((!token || token.startsWith("shpua_")) && shop) {
+    try {
+      const { sessionStorage } = await import("../shopify.server");
+      const offlineId = `offline_${shop}`;
+      const offlineSession = await sessionStorage.loadSession(offlineId);
+      if (offlineSession?.accessToken) {
+        token = offlineSession.accessToken;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const backendUrl = new URL(requestUrl.pathname, backendBaseUrl);
   backendUrl.search = requestUrl.search;
 
   const headers = {
     "Content-Type": "application/json",
     "X-Shopify-Shop-Domain": shop,
-    "X-Shopify-Access-Token": session?.accessToken || "",
+    "X-Shopify-Access-Token": token || session?.accessToken || "",
   };
 
   let body = undefined;
