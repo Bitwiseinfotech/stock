@@ -812,22 +812,76 @@
     if (document.querySelector("[data-smart-stock-launch-preorder]")) return; // already exists
 
     var embedConfig = window.SmartStockEmbedConfig || window.SmartStockContext || {};
-    var shop = embedConfig.shop || (window.Shopify && window.Shopify.shop) || window.location.hostname;
+    var shop = embedConfig.shop ||
+      (window.Shopify && window.Shopify.shop) ||
+      window.location.hostname;
+
+    // ── Universal product ID detection ──────────────────────────────────────
     var productId = embedConfig.productId ||
       (window.SmartStockProduct && window.SmartStockProduct.id) ||
+      // ShopifyAnalytics (all themes inject this)
       (window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.product && window.ShopifyAnalytics.meta.product.id) ||
+      // window.meta (older themes)
+      (window.meta && window.meta.product && window.meta.product.id) ||
+      // __st (Shopify tracking object, always present)
+      (window.__st && window.__st.rid) ||
       "";
+
+    // DOM-based product ID detection (works on any theme)
+    if (!productId) {
+      var selectors = [
+        "[data-product-id]",
+        "product-form[data-product-id]",
+        "form[action*='/cart/add'] input[name='product-id']",
+        "[data-product-handle]",
+      ];
+      for (var si = 0; si < selectors.length; si++) {
+        var el = document.querySelector(selectors[si]);
+        if (el) {
+          productId = el.getAttribute("data-product-id") || el.value || "";
+          if (productId) break;
+        }
+      }
+    }
+
+    // JSON-LD structured data (present in many themes)
+    if (!productId) {
+      try {
+        var jsonLd = document.querySelector('script[type="application/ld+json"]');
+        if (jsonLd) {
+          var ld = JSON.parse(jsonLd.textContent || "{}");
+          // Handle @graph array or direct object
+          var ldProduct = Array.isArray(ld["@graph"])
+            ? ld["@graph"].find(function(n) { return n["@type"] === "Product"; })
+            : (ld["@type"] === "Product" ? ld : null);
+          if (ldProduct && ldProduct["@id"]) {
+            // Shopify's JSON-LD @id ends with the product ID
+            var idMatch = String(ldProduct["@id"]).match(/\/(\d+)$/);
+            if (idMatch) productId = idMatch[1];
+          }
+        }
+      } catch (_) {}
+    }
+
+    // ── Universal variant ID detection ──────────────────────────────────────
     var variantId = embedConfig.variantId ||
       (window.SmartStockProduct && window.SmartStockProduct.variants && window.SmartStockProduct.variants[0] && window.SmartStockProduct.variants[0].id) ||
       "";
+
+    if (!variantId) {
+      var variantEl = document.querySelector(
+        'form[action*="/cart/add"] [name="id"], select[name="id"], input[name="id"]'
+      );
+      if (variantEl && variantEl.value) variantId = variantEl.value;
+    }
+
+    // ── Variant price ────────────────────────────────────────────────────────
     var variantPrice = "";
     if (window.SmartStockProduct && window.SmartStockProduct.variants && window.SmartStockProduct.variants[0]) {
       variantPrice = window.SmartStockProduct.variants[0].price || "";
     }
 
-    if (!shop || !productId) return; // not a product page or no data
-
-    // Extract product handle from URL
+    // ── Product handle from URL ──────────────────────────────────────────────
     var autoHandle = "";
     try {
       if (window.location.pathname.indexOf("/products/") !== -1) {
@@ -838,12 +892,15 @@
       }
     } catch (_) {}
 
+    // ── Guard: need shop + (productId OR handle) ─────────────────────────────
+    if (!shop || (!productId && !autoHandle)) return;
+
     var root = document.createElement("div");
     root.id = "smart-stock-launch-preorder-auto";
     root.className = "smart-stock-launch-preorder-root";
     root.setAttribute("data-smart-stock-launch-preorder", "");
     root.setAttribute("data-shop", shop);
-    root.setAttribute("data-product-id", String(productId));
+    root.setAttribute("data-product-id", String(productId || ""));
     root.setAttribute("data-selected-variant-id", String(variantId || ""));
     root.setAttribute("data-selected-variant-price", String(variantPrice || ""));
     root.setAttribute("data-currency", embedConfig.currency || (window.Shopify && window.Shopify.currency && window.Shopify.currency.active) || "USD");

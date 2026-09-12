@@ -243,7 +243,27 @@ if (typeof window !== "undefined") {
 // ======================================================
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
+
+  // Auto-enable Smart Stock app embed in merchant's active theme.
+  // This is idempotent — safe to run on every page load.
+  // Runs in background (no await) so it never delays the app loading.
+  try {
+    const { enableSmartStockEmbed } = await import("../services/themeEmbedService.js");
+    const shop = session?.shop;
+    // Prefer offline token (long-lived) for theme API calls
+    let accessToken = session?.accessToken || "";
+    if (!accessToken || accessToken.startsWith("shpua_")) {
+      try {
+        const { sessionStorage } = await import("../shopify.server");
+        const offlineSession = await sessionStorage.loadSession(`offline_${shop}`);
+        if (offlineSession?.accessToken) accessToken = offlineSession.accessToken;
+      } catch (_) {}
+    }
+    if (shop && accessToken) {
+      enableSmartStockEmbed(shop, accessToken).catch(() => {});
+    }
+  } catch (_) {}
 
   return {
     apiKey: process.env.SHOPIFY_API_KEY || "",
