@@ -1007,45 +1007,53 @@ async function getStorefrontLaunchPreOrder(req, res) {
       );
     }
 
-    const productOrList = [];
-    if (cleanProductId) {
-      productOrList.push(
-        { productId: cleanProductId },
-        { productId: `gid://shopify/Product/${cleanProductId}` },
-        { productId: String(rawProductId).trim() }
-      );
-    }
-    if (cleanHandle) {
-      productOrList.push({ productHandle: cleanHandle });
-    }
-    if (rawVariantId) {
-      const cleanVarId = String(rawVariantId).replace(/^gid:\/\/shopify\/ProductVariant\//, "").trim();
-      productOrList.push(
-        { variantId: cleanVarId },
-        { variantId: `gid://shopify/ProductVariant/${cleanVarId}` }
-      );
-    }
-
-    if (productOrList.length === 0) {
-      return res.status(200).json({ enabled: false, message: "Product identifier required." });
-    }
-
     const LaunchPreOrder = require("../models/LaunchPreOrder");
 
-    const filter = {
-      $or: productOrList,
-    };
+    // Strategy: Try handle-first (most reliable), then productId
+    // This handles cases where productId in DB differs from actual Shopify product ID
+    let config = null;
 
-    if (shopQueries.length > 0) {
-      filter.$and = [{ $or: shopQueries }];
+    // 1. Handle-based lookup (highest priority - handle never changes)
+    if (cleanHandle && shopQueries.length > 0) {
+      config = await LaunchPreOrder.findOne({
+        $and: [{ $or: shopQueries }, { productHandle: cleanHandle }],
+      }).lean().catch(() => null);
     }
 
-    let config = await LaunchPreOrder.findOne(filter).lean().catch(() => null);
+    // 2. ProductId-based lookup (fallback)
+    if (!config && cleanProductId && shopQueries.length > 0) {
+      const productIdOrList = [
+        { productId: cleanProductId },
+        { productId: `gid://shopify/Product/${cleanProductId}` },
+        { productId: String(rawProductId).trim() },
+      ];
+      config = await LaunchPreOrder.findOne({
+        $and: [{ $or: shopQueries }, { $or: productIdOrList }],
+      }).lean().catch(() => null);
+    }
+
+    // 3. VariantId-based lookup (last resort)
+    if (!config && rawVariantId && shopQueries.length > 0) {
+      const cleanVarId = String(rawVariantId).replace(/^gid:\/\/shopify\/ProductVariant\//, "").trim();
+      config = await LaunchPreOrder.findOne({
+        $and: [
+          { $or: shopQueries },
+          { $or: [{ variantId: cleanVarId }, { variantId: `gid://shopify/ProductVariant/${cleanVarId}` }] },
+        ],
+      }).lean().catch(() => null);
+    }
+
+    // 4. Auto-heal: if found by handle but productId differs, update DB silently
+    if (config && cleanProductId && config.productId && config.productId !== cleanProductId) {
+      LaunchPreOrder.findByIdAndUpdate(config._id, { productId: cleanProductId }).catch(() => {});
+      config = { ...config, productId: cleanProductId };
+    }
 
     const SmartBadgeApplication = require("../models/SmartBadgeApplication");
+    const allProductIds = [cleanProductId, config?.productId, `gid://shopify/Product/${cleanProductId}`].filter(Boolean);
     const smartPreOrderApp = await SmartBadgeApplication.findOne({
       ...(shopQueries.length > 0 ? { $or: shopQueries } : { shop }),
-      productId: { $in: [cleanProductId, `gid://shopify/Product/${cleanProductId}`, String(rawProductId).trim()].filter(Boolean) },
+      productId: { $in: allProductIds },
       badgeType: "PRE_ORDER",
       enabled: true,
     }).lean().catch(() => null);

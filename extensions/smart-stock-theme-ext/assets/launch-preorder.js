@@ -802,9 +802,73 @@
 
   var isInitializing = false;
 
+  // ─────────────────────────────────────────────────────────────────
+  // AUTO-INJECT: If the merchant has NOT added the launch-preorder
+  // block in Theme Editor, create the root container automatically
+  // from SmartStockEmbedConfig (set by smart-stock-embed.liquid).
+  // This means: configure in app → auto shows on storefront. Done.
+  // ─────────────────────────────────────────────────────────────────
+  function ensureBlockRoot() {
+    if (document.querySelector("[data-smart-stock-launch-preorder]")) return; // already exists
+
+    var embedConfig = window.SmartStockEmbedConfig || window.SmartStockContext || {};
+    var shop = embedConfig.shop || (window.Shopify && window.Shopify.shop) || window.location.hostname;
+    var productId = embedConfig.productId ||
+      (window.SmartStockProduct && window.SmartStockProduct.id) ||
+      (window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.product && window.ShopifyAnalytics.meta.product.id) ||
+      "";
+    var variantId = embedConfig.variantId ||
+      (window.SmartStockProduct && window.SmartStockProduct.variants && window.SmartStockProduct.variants[0] && window.SmartStockProduct.variants[0].id) ||
+      "";
+    var variantPrice = "";
+    if (window.SmartStockProduct && window.SmartStockProduct.variants && window.SmartStockProduct.variants[0]) {
+      variantPrice = window.SmartStockProduct.variants[0].price || "";
+    }
+
+    if (!shop || !productId) return; // not a product page or no data
+
+    // Extract product handle from URL
+    var autoHandle = "";
+    try {
+      if (window.location.pathname.indexOf("/products/") !== -1) {
+        autoHandle = window.location.pathname.split("/products/")[1].split(/[/?#]/)[0] || "";
+      }
+      if (!autoHandle && window.SmartStockProduct && window.SmartStockProduct.handle) {
+        autoHandle = window.SmartStockProduct.handle;
+      }
+    } catch (_) {}
+
+    var root = document.createElement("div");
+    root.id = "smart-stock-launch-preorder-auto";
+    root.className = "smart-stock-launch-preorder-root";
+    root.setAttribute("data-smart-stock-launch-preorder", "");
+    root.setAttribute("data-shop", shop);
+    root.setAttribute("data-product-id", String(productId));
+    root.setAttribute("data-selected-variant-id", String(variantId || ""));
+    root.setAttribute("data-selected-variant-price", String(variantPrice || ""));
+    root.setAttribute("data-currency", embedConfig.currency || (window.Shopify && window.Shopify.currency && window.Shopify.currency.active) || "USD");
+    root.setAttribute("data-money-format", embedConfig.moneyFormat || (window.Shopify && window.Shopify.money_format) || "${{amount}}");
+    if (autoHandle) root.setAttribute("data-handle", autoHandle);
+    root.style.cssText = "min-height:0;display:none;";
+
+    // Inject product JSON if available
+    if (window.SmartStockProduct) {
+      var jsonScript = document.createElement("script");
+      jsonScript.type = "application/json";
+      jsonScript.className = "smart-stock-product-json";
+      try { jsonScript.textContent = JSON.stringify(window.SmartStockProduct); } catch (_) {}
+      root.appendChild(jsonScript);
+    }
+
+    document.body.appendChild(root);
+  }
+
   async function init() {
     if (isInitializing) return;
     isInitializing = true;
+
+    // Auto-create container if block not manually added in theme editor
+    ensureBlockRoot();
 
     currentShop = getShopDomain();
 
